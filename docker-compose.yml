@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  # --- Bun + Hono (BFF / Frontend) ---
+  frontend:
+    build:
+      context: .  # フロントエンドリポジトリの直下
+      dockerfile: Dockerfile
+    image: localhost/ai-education_frontend:latest
+    networks:
+      - ai-net
+    env_file: .env
+    ports:
+      - "3000:3000"
+    command: ["bun", "run", "dev"]
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      # Hono等からバックエンドコンテナを呼ぶ場合は、コンテナ名「backend」で通信可能
+      - BACKEND_API_URL=http://backend:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  ai-net:
+    external: true  # バックエンド側で作成されたネットワークを外から利用する
