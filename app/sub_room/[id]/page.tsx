@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
-import { clearUserSession, loadUserSession, UserSession } from '@/src/lib/user-session';
+import { securedFetch } from '@/src/lib/api';
 
 // --- 型定義 ---
 interface AiSet {
@@ -13,32 +13,105 @@ interface AiSet {
     previewUrls: string[];
 }
 
+interface CreatedAiModel {
+    id: string;
+    title: string;
+    description: string;
+    creator_name: string;
+    image_count: number;
+    theme_color: string;
+    updata_time: string;
+}
+
 function SubRoomContent() {
-    const searchParams = useSearchParams();
     const router = useRouter();
-    const classId = searchParams.get('id');
-    const className = searchParams.get('name');
+    const params = useParams();
 
-    const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+    // 🌟 セッション管理用のStateはすべて廃止
+    const [className, setClassName] = useState<string>('読み込み中...');
+    const [inviteCode, setInviteCode] = useState<string>('');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
     const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+    const [aiModels, setAiModels] = useState<CreatedAiModel[]>([]);
+    const [isLoadingAi, setIsLoadingAi] = useState(true);
     const [aiSets, setAiSets] = useState<AiSet[]>([
         { name: '', desc: '', images: [], previewUrls: [] }
     ]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [userInfo, setUserInfo] = useState<{ name: string; role: 'teacher' | 'student' | string } | null>(null);
 
-    // セッション取得
+    // 🌟 データの同期はparams（URLのID）の確定のみをトリガーにする
     useEffect(() => {
-        const session = loadUserSession();
-        if (session) {
-            setCurrentUser(session);
-            return;
-        }
+        if (!params) return;
+        const classId = params.id as string;
 
-        clearUserSession();
-        router.push('/');
-    }, [router]);
+        const fetchRoomData = async () => {
+            try {
+                console.log(`[Debug] APIリクエスト開始: /api/v1/courses/${classId}`);
 
+                // ① クラス情報の取得
+                const courseRes = await securedFetch(`/api/v1/courses/${classId}`, { method: 'GET' });
+
+                if (courseRes.status === 401 || courseRes.status === 403) {
+                    router.push('/');
+                    return;
+                }
+
+                if (courseRes.ok) {
+                    const courseData = await courseRes.json();
+                    setClassName(courseData.title || '無題のクラス');
+                    setInviteCode(courseData.invite_code || courseData.code || '');
+                } else {
+                    router.push('/main_room');
+                    return;
+                }
+
+                // 🌟 ② ユーザー情報の取得（独立したAPIを正しく叩く）
+                const userRes = await securedFetch('/api/v1/user', { method: 'GET' });
+                if (userRes.status === 401 || userRes.status === 403) {
+                    router.push('/');
+                    return;
+                }
+
+                if (userRes.ok) {
+                    const userData = await userRes.json();
+                    console.log("[Debug] 受信したユーザーデータ:", userData);
+
+                    // バックエンドのJSONキー（例: name や role, もしくは user_name など）に合わせてセット
+                    // 💡 もしGo側が "user_name" で返している場合は `userData.user_name` に書き換えてください
+                    setUserInfo({
+                        name: userData.UserName, // キー名を合わせる
+                        role: userData.IsTeacher ? 'teacher' : 'student' // 真偽値から文字列へ変換
+                    });
+                }
+
+                // 🌟 ③ みんなが作成したAIの一覧を取得（パスを修正）
+                const aiRes = await securedFetch(`/api/v1/courses/${classId}/ai_models`, { method: 'GET' });
+                if (aiRes.status === 401 || aiRes.status === 403) {
+                    router.push('/');
+                    return;
+                }
+
+                if (aiRes.ok) {
+                    const aiData = await aiRes.json();
+                    setAiModels(aiData.models || []);
+                }
+            } catch (error) {
+                console.error("[Debug] fetchRoomData例外:", error);
+            } finally {
+                setIsLoadingAi(false);
+            }
+        };
+
+        fetchRoomData();
+    }, [params, router]);
+    // 安全な型ガード
+    if (!params) {
+        return <div className="min-h-screen bg-gray-50 flex items-center justify-center">読み込み中...</div>;
+    }
+    const classId = params.id as string;
+
+    // --- 各種ハンドラー関数（ロジックは維持） ---
     const handleAddSet = () => {
         setAiSets(prev => [...prev, { name: '', desc: '', images: [], previewUrls: [] }]);
     };
@@ -68,13 +141,12 @@ function SubRoomContent() {
                 return set;
             }));
         }
-        e.target.value = ''; // Reset for same file selection
+        e.target.value = '';
     };
 
     const handleSetImageRemove = (setIndex: number, imageIndex: number) => {
         setAiSets(prev => prev.map((set, i) => {
             if (i === setIndex) {
-                // Revoke URL to prevent memory leaks
                 URL.revokeObjectURL(set.previewUrls[imageIndex]);
                 return {
                     ...set,
@@ -86,9 +158,6 @@ function SubRoomContent() {
         }));
     };
 
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    // 画像リサイズ用ユーティリティ
     const resizeImage = (file: File, width: number, height: number): Promise<Blob> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -116,7 +185,6 @@ function SubRoomContent() {
         });
     };
 
-    // BlobをBase64文字列に変換
     const blobToBase64 = (blob: Blob): Promise<string> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -130,7 +198,6 @@ function SubRoomContent() {
         e.preventDefault();
         if (isSubmitting) return;
 
-        // Validation
         const isValid = aiSets.every(set => set.name && set.desc && set.images.length > 0);
         if (!isValid) {
             alert('すべてのカテゴリに名前、説明、画像を1枚以上入れてください');
@@ -163,6 +230,11 @@ function SubRoomContent() {
                 }),
             });
 
+            if (response.status === 401 || response.status === 403) {
+                router.push('/');
+                return;
+            }
+
             if (!response.ok) throw new Error('通信エラーが発生しました');
 
             alert('AIの学習を開始しました！');
@@ -176,42 +248,134 @@ function SubRoomContent() {
         }
     };
 
-    if (!currentUser) return <div className="min-h-screen bg-gray-50 flex items-center justify-center">読み込み中...</div>;
-
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
             {/* Header */}
             <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-                <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+                <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
                         </button>
-                        <h1 className="text-xl font-bold text-gray-800">{className}</h1>
+
+                        <div className="flex items-center gap-4">
+                            <h1 className="text-2xl font-bold text-gray-800 tracking-tight">{className}</h1>
+
+                            {/* 先生の時のみ表示するよう userInfo.role をチェック */}
+                            {userInfo?.role === 'teacher' && inviteCode && (
+                                <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-3 py-1 rounded-xl shadow-sm">
+                                    <span className="text-[11px] font-black text-amber-700 tracking-wider uppercase">参加コード:</span>
+                                    <span className="font-mono text-base font-black text-amber-900 tracking-widest bg-white px-2 py-0.5 rounded-lg border border-amber-100 select-all">
+                                        {inviteCode}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        <span className="text-xs px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full font-bold border border-indigo-100">{currentUser.role === 'teacher' ? '先生' : '生徒'}</span>
-                        <div className="text-sm font-bold text-gray-700">{currentUser.name}</div>
+
+                    <div className="flex items-center gap-5">
+                        <button
+                            onClick={() => setIsAiModalOpen(true)}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all flex items-center gap-1.5"
+                        >
+                            <span>✨ AIを新しく作る</span>
+                        </button>
+
+                        <div className="h-6 w-[1px] bg-gray-200" />
+
+                        {/* 🌟 3. マイページ部分をユーザー情報表示に書き換え */}
+                        <div className="flex items-center gap-3">
+                            {userInfo ? (
+                                <>
+                                    {userInfo.role === 'teacher' ? (
+                                        <span className="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 rounded-md font-bold border border-amber-100">
+                                            先生
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold border border-indigo-100">
+                                            生徒
+                                        </span>
+                                    )}
+                                    <div className="text-sm font-bold text-gray-700">{userInfo.name} さん</div>
+                                </>
+                            ) : (
+                                <div className="text-sm font-bold text-gray-400 animate-pulse">読み込み中...</div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </header>
 
-            <main className="flex-1 max-w-7xl mx-auto w-full p-6 flex flex-col items-center justify-center">
-                <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 overflow-hidden w-full max-w-2xl">
-                    <div className="bg-indigo-600 p-12 text-center text-white">
-                        <h2 className="text-3xl font-black mb-8">AIを作成する</h2>
-                        <button
-                            onClick={() => setIsAiModalOpen(true)}
-                            className="bg-white text-indigo-600 px-10 py-5 rounded-3xl font-black text-xl shadow-2xl hover:scale-105 active:scale-95 transition-all"
-                        >
-                            ✨ AIを新しく作る
-                        </button>
-                    </div>
-                    <div className="p-10 text-center">
-                        <p className="text-gray-500 font-bold mb-6">作成ボタンを押して学習を開始しましょう</p>
-                        <Link href="/api/main_room" className="text-indigo-600 font-bold hover:underline">ホームに戻る</Link>
-                    </div>
+            {/* Main Content */}
+            <main className="flex-1 max-w-7xl mx-auto w-full p-6">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-gray-700">みんなが作ったAIモデル</h2>
                 </div>
+
+                {isLoadingAi ? (
+                    <div className="text-center py-20 text-gray-400 font-medium">AIモデルを読み込んでいます...</div>
+                ) : aiModels.length === 0 ? (
+                    <div className="bg-white border-2 border-dashed border-gray-200 rounded-[2rem] p-16 text-center max-w-xl mx-auto mt-10">
+                        <p className="text-gray-500 font-bold mb-4 text-lg">まだこのクラスにAIモデルがありません</p>
+                        <p className="text-sm text-gray-400 mb-6">右上のボタンから最初のAIを作ってみましょう！</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {aiModels.map((ai) => {
+                            const validTheme = ai.theme_color || 'indigo';
+                            const themeBg = {
+                                blue: 'bg-blue-600', green: 'bg-emerald-600', indigo: 'bg-indigo-600',
+                                purple: 'bg-purple-600', pink: 'bg-pink-600', orange: 'bg-orange-600'
+                            }[validTheme] || 'bg-indigo-600';
+
+                            return (
+                                <div key={ai.id} className="group bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-200 flex flex-col h-76 relative">
+                                    <div className={`${themeBg} h-28 p-5 relative flex flex-col justify-between text-white`}>
+                                        <h3 className="text-2xl font-bold truncate pr-16 hover:underline cursor-pointer">
+                                            {ai.title}
+                                        </h3>
+                                        <p className="text-sm font-medium opacity-90 truncate">
+                                            作った人: {ai.creator_name}
+                                        </p>
+                                    </div>
+
+                                    <div className="absolute top-20 right-4 w-16 h-16 bg-white rounded-full p-1 shadow-md z-10">
+                                        <div className={`${themeBg} w-full h-full rounded-full flex items-center justify-center text-white text-2xl font-bold opacity-90`}>
+                                            {ai.creator_name ? ai.creator_name.charAt(0) : 'A'}
+                                        </div>
+                                    </div>
+
+                                    <div className="p-5 pt-10 flex-1 flex flex-col justify-between">
+                                        <p className="text-sm text-gray-600 line-clamp-3 leading-relaxed">
+                                            {ai.description}
+                                        </p>
+                                    </div>
+
+                                    <div className="px-5 py-3 border-t border-gray-100 flex justify-between items-center bg-gray-50/50 relative z-20">
+                                        <div className="flex flex-col gap-0.5">
+                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                                <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-md font-bold">
+                                                    画像 {ai.image_count || 0}枚
+                                                </span>
+                                            </div>
+                                            {ai.updata_time && (
+                                                <p className="text-[11px] text-gray-400 font-medium">
+                                                    作成: {new Date(ai.updata_time).toLocaleDateString('ja-JP', {
+                                                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                                                })}
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        <button className="px-3 py-1.5 bg-white border border-gray-200 shadow-sm rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-50 transition-colors">
+                                            テストする
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </main>
 
             {/* Sidebar */}
@@ -221,8 +385,8 @@ function SubRoomContent() {
                     <div className="fixed inset-y-0 left-0 z-[110] w-64 bg-white shadow-2xl p-6">
                         <h2 className="text-xl font-black mb-8">メニュー</h2>
                         <div className="space-y-4">
-                            <Link href="/api/main_room" className="block p-4 hover:bg-indigo-50 rounded-2xl font-bold">ホーム</Link>
-                            <button onClick={() => router.push('/')} className="block w-full text-left p-4 hover:bg-red-50 text-red-500 rounded-2xl font-bold">ログアウト</button>
+                            <Link href="/main_room" className="block p-4 hover:bg-indigo-50 rounded-2xl font-bold">ホーム</Link>
+                            <button onClick={() => { router.push('/'); }} className="block w-full text-left p-4 hover:bg-red-50 text-red-500 rounded-2xl font-bold">ログアウト</button>
                         </div>
                     </div>
                 </>

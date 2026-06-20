@@ -7,13 +7,11 @@ import { Html5Qrcode } from 'html5-qrcode';
 import jsQR from 'jsqr';
 import { API_URL } from '@/src/lib/api';
 import { readApiError } from '@/src/lib/api-error';
-import { saveUserSession } from '@/src/lib/user-session';
+// ⭕ クッキー管理ライブラリをインポート
+import Cookies from 'js-cookie';
 
 // =================================================================
 // QR Code Scanner Modal
-// =================================================================
-// =================================================================
-// QR Code Scanner Modal (Custom Simple UI)
 // =================================================================
 interface QrScannerModalProps {
   onScanSuccess: (decodedText: string) => void;
@@ -27,14 +25,11 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // インスタンス作成
-    // 既に存在する場合は作成しない
     if (!scannerRef.current) {
       scannerRef.current = new Html5Qrcode("reader");
     }
 
     return () => {
-      // クリーンアップ
       if (scannerRef.current) {
         if (scannerRef.current.isScanning) {
           scannerRef.current.stop().catch((err) => console.error("Stop failed", err));
@@ -50,17 +45,12 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
 
     try {
       await scannerRef.current.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decodedText) => {
-          // スキャン成功時の処理
-          // 1. まずスキャンを停止するフラグを立てる（重複防止）または即座に停止処理を行う
-          // 2. 停止が完了してから onScanSuccess を呼ぶ
-          handleScanSuccess(decodedText);
-        },
-        () => {
-          // エラーは無視
-        }
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            handleScanSuccess(decodedText);
+          },
+          () => {}
       );
       setIsScanning(true);
     } catch (err) {
@@ -72,7 +62,6 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
   const handleScanSuccess = async (decodedText: string) => {
     if (!scannerRef.current) return;
     try {
-      // カメラを停止
       if (scannerRef.current.isScanning) {
         await scannerRef.current.stop();
       }
@@ -96,8 +85,6 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    // インスタンスがなくてもファイル読み込みはjsQRで行うのでチェックを緩和しても良いが、
-    // モーダル全体のロジックとしてはスキャナーが準備できている前提でも問題ない。
     setError("");
 
     if (e.target.files && e.target.files.length > 0) {
@@ -133,10 +120,8 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
         if (code) {
           onScanSuccess(code.data);
         } else {
-          console.log("jsQR code not found");
           setError("QRコードが見つかりませんでした。別の写真を試してください。");
         }
-
       } catch (err) {
         console.error("QR Scan Error:", err);
         setError("画像の読み込みに失敗しました。別の写真を試してください。");
@@ -145,68 +130,68 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4 animate-fadeIn backdrop-blur-sm">
-      <div className="bg-white p-6 rounded-3xl w-full max-w-sm relative shadow-2xl flex flex-col gap-4">
-        <button
-          onClick={() => { stopCamera(); onClose(); }}
-          className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 w-10 h-10 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 transition-colors z-10"
-        >
-          ✕
-        </button>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4 animate-fadeIn backdrop-blur-sm">
+        <div className="bg-white p-6 rounded-3xl w-full max-w-sm relative shadow-2xl flex flex-col gap-4">
+          <button
+              onClick={() => { stopCamera(); onClose(); }}
+              className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 w-10 h-10 flex items-center justify-center rounded-full bg-slate-100 hover:bg-slate-200 transition-colors z-10"
+          >
+            ✕
+          </button>
 
-        <h3 className="text-center font-bold text-xl text-slate-700 mt-2">QRコード を よみとる</h3>
+          <h3 className="text-center font-bold text-xl text-slate-700 mt-2">QRコード を よみとる</h3>
 
-        {error && (
-          <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm text-center border border-red-200">
-            {error}
+          {error && (
+              <div className="bg-red-50 text-red-500 p-3 rounded-xl text-sm text-center border border-red-200">
+                {error}
+              </div>
+          )}
+
+          <div className="relative overflow-hidden rounded-2xl bg-black min-h-[250px] flex items-center justify-center">
+            <div id="reader" className="w-full h-full"></div>
+            {!isScanning && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-100 text-slate-500 gap-2">
+                  <span className="text-4xl">📷</span>
+                  <span className="text-sm font-bold">カメラは 停止中 だよ</span>
+                </div>
+            )}
           </div>
-        )}
 
-        <div className="relative overflow-hidden rounded-2xl bg-black min-h-[250px] flex items-center justify-center">
-          <div id="reader" className="w-full h-full"></div>
-          {!isScanning && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-100 text-slate-500 gap-2">
-              <span className="text-4xl">📷</span>
-              <span className="text-sm font-bold">カメラは 停止中 だよ</span>
+          <div className="flex flex-col gap-3">
+            {!isScanning ? (
+                <button
+                    onClick={startCamera}
+                    className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 rounded-xl shadow-md flex items-center justify-center gap-2"
+                >
+                  🎥 カメラ を 起動する
+                </button>
+            ) : (
+                <button
+                    onClick={stopCamera}
+                    className="w-full bg-red-400 hover:bg-red-500 text-white font-bold py-3 rounded-xl shadow-md"
+                >
+                  ⏹ カメラ を 止める
+                </button>
+            )}
+
+            <div className="relative">
+              <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  className="hidden"
+              />
+              <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full bg-white border-2 border-sky-200 text-sky-600 hover:bg-sky-50 font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                📁 アルバム から 選ぶ
+              </button>
             </div>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-3">
-          {!isScanning ? (
-            <button
-              onClick={startCamera}
-              className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 rounded-xl shadow-md transition-transform active:scale-95 flex items-center justify-center gap-2"
-            >
-              🎥 カメラ を 起動する
-            </button>
-          ) : (
-            <button
-              onClick={stopCamera}
-              className="w-full bg-red-400 hover:bg-red-500 text-white font-bold py-3 rounded-xl shadow-md transition-transform active:scale-95"
-            >
-              ⏹ カメラ を 止める
-            </button>
-          )}
-
-          <div className="relative">
-            <input
-              type="file"
-              accept="image/*"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full bg-white border-2 border-sky-200 text-sky-600 hover:bg-sky-50 font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
-            >
-              📁 アルバム から 選ぶ
-            </button>
           </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -243,11 +228,10 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
       const data = response.ok ? await response.json() : null;
 
       if (response.ok && data?.status === "next_step") {
-        saveUserSession({
-          id: data.user_id ?? username,
-          name: data.user_name ?? username,
-          role: data.user_teacher === 'teacher' ? 'teacher' : 'student',
-        });
+        // 💡 もしこの段階で token も一緒に返ってきている特別なケースがあればクッキーに即保存
+        if (data.token) {
+          Cookies.set('auth_token', data.token, { expires: 1, secure: false, sameSite: 'lax' });
+        }
         onUserChecked(username, data.img_list, data.img_number ?? []);
       } else {
         setErrorMessage(await readApiError(response, "そのなまえのひとはいないみたい。もういちどかくにんしてね。"));
@@ -275,33 +259,29 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
       console.log("QR Login Response:", data);
 
       if (response.ok && data) {
-        // Relaxed success check logic
         const isPasswordValid = data.password === true || data.password === "true" || data.password === "True";
         const isSuccessStatus = data.status === "success" || (data.status === "password" && isPasswordValid);
 
-        if (isSuccessStatus || isPasswordValid) {
-          if (data?.user_id && data?.user_name) {
-            saveUserSession({
-              id: data.user_id,
-              name: data.user_name,
-              role: data.user_teacher === 'teacher' ? 'teacher' : 'student',
-            });
-          }
+        // 🔒 ログイン成功ルート
+        if ((isSuccessStatus || isPasswordValid) && data.token) {
+          // ⭕ クッキーにトークンだけを保存
+          Cookies.set('auth_token', data.token, { expires: 1, secure: false, sameSite: 'lax' });
           console.log("Login Success! Redirecting to /main_room");
           router.push('/main_room');
-        } else if (data.status === "next_step" || data.status === "QR_Registrer") {
-          console.log("Next Step Branch. img_list:", data.img_list);
-          // 画像リストがあれば次のステップ（画像認証）へ、なければログイン成功とみなす
+        }
+        // 次のステップ（画像認証）ルート
+        else if (data.status === "next_step" || data.status === "QR_Registrer") {
+          if (data.token) {
+            Cookies.set('auth_token', data.token, { expires: 1, secure: false, sameSite: 'lax' });
+          }
           if (data.img_list && data.img_list.length > 0) {
-            console.log("Proceeding to Step 2");
-            onUserChecked(data.username, data.img_list, data.img_number ?? []);
+            onUserChecked(data.username || username, data.img_list, data.img_number ?? []);
           } else {
             console.log("No images, redirecting to /main_room");
             router.push('/main_room');
           }
         } else {
           const debugInfo = `(st:${data.status}, pw:${data.password})`;
-          console.error("Login Failed:", debugInfo);
           setErrorMessage(data.error || "QRコードのログインに しっぱい しました。 " + debugInfo);
         }
       } else {
@@ -316,73 +296,72 @@ function LoginStep1({ onUserChecked }: LoginStep1Props) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f0f9ff] p-4 font-sans">
-      <div className="w-full max-w-md p-8 bg-white rounded-3xl shadow-lg">
-        <h3 className="text-center text-3xl font-bold text-[#0ea5e9] mb-6 tracking-tight">👋 ろぐいん</h3>
+      <div className="min-h-screen flex items-center justify-center bg-[#f0f9ff] p-4 font-sans">
+        <div className="w-full max-w-md p-8 bg-white rounded-3xl shadow-lg">
+          <h3 className="text-center text-3xl font-bold text-[#0ea5e9] mb-6 tracking-tight">👋 ろぐいん</h3>
 
-        {showQrScanner && (
-          <QrScannerModal
-            onScanSuccess={handleQrScan}
-            onClose={() => setShowQrScanner(false)}
-          />
-        )}
+          {showQrScanner && (
+              <QrScannerModal
+                  onScanSuccess={handleQrScan}
+                  onClose={() => setShowQrScanner(false)}
+              />
+          )}
 
-        {errorMessage && (
-          <p className="text-red-500 border border-red-300 bg-red-50 p-3 mb-4 text-sm rounded-xl text-center">
-            {errorMessage}
-          </p>
-        )}
+          {errorMessage && (
+              <p className="text-red-500 border border-red-300 bg-red-50 p-3 mb-4 text-sm rounded-xl text-center">
+                {errorMessage}
+              </p>
+          )}
 
-        <form onSubmit={handleUserCheck}>
-          <div className="mb-5">
-            <label className="block mb-2 text-sm font-semibold text-slate-600">
-              😊 なまえ
-            </label>
-            <input
-              type="text"
-              className="w-full px-4 py-3 text-base border-2 border-slate-200 rounded-xl focus:border-sky-300 focus:outline-none focus:ring-4 focus:ring-sky-100 transition-all"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              disabled={isLoading}
-            />
-          </div>
+          <form onSubmit={handleUserCheck}>
+            <div className="mb-5">
+              <label className="block mb-2 text-sm font-semibold text-slate-600">
+                😊 なまえ
+              </label>
+              <input
+                  type="text"
+                  className="w-full px-4 py-3 text-base border-2 border-slate-200 rounded-xl focus:border-sky-300 focus:outline-none focus:ring-4 focus:ring-sky-100 transition-all"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  required
+                  disabled={isLoading}
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-full transition-all transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:scale-100"
-          >
-            {isLoading ? "かくにんちゅう..." : "つぎへ →"}
-          </button>
-
-          <div className="mt-4">
             <button
-              type="button"
-              onClick={() => setShowQrScanner(true)}
-              disabled={isLoading}
-              className="w-full bg-white border-2 border-sky-500 text-sky-500 font-bold py-4 rounded-full transition-all hover:bg-sky-50 shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 rounded-full transition-all transform hover:scale-105 shadow-lg disabled:opacity-50"
             >
-              📷 QRコードで ろぐいん
+              {isLoading ? "かくにんちゅう..." : "つぎへ →"}
             </button>
-          </div>
-        </form>
 
-        <hr className="my-6 border-slate-200" />
+            <div className="mt-4">
+              <button
+                  type="button"
+                  onClick={() => setShowQrScanner(true)}
+                  disabled={isLoading}
+                  className="w-full bg-white border-2 border-sky-500 text-sky-500 font-bold py-4 rounded-full transition-all hover:bg-sky-50 shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                📷 QRコードで ろぐいん
+              </button>
+            </div>
+          </form>
 
-        <div className="text-center text-sm space-y-2">
-          <a href="#" className="font-semibold text-slate-400 cursor-not-allowed">
+          <hr className="my-6 border-slate-200" />
+
+          <div className="text-center text-sm space-y-2">
+          <span className="font-semibold text-slate-400 cursor-not-allowed">
             ぱすわーどをわすれたばあい
-          </a>
-          <Link href="/signup" className="block font-semibold text-sky-500 hover:text-sky-600 hover:underline">
-            あたらしく とうろくする
-          </Link>
+          </span>
+            <Link href="/signup" className="block font-semibold text-sky-500 hover:text-sky-600 hover:underline">
+              あたらしく とうろくする
+            </Link>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
-
 
 // =================================================================
 // Step 2: Image Password Component
@@ -449,21 +428,16 @@ function LoginStep2({ username, imageList, imageNumbers, onBack }: LoginStep2Pro
       const result = response.ok ? await response.json() : null;
 
       if (response.ok && result && (result.password === true || result.password === "true")) {
-        saveUserSession({
-          id: username,
-          name: username,
-          role: 'student',
-        });
-        // メイン画面の代わりにログイン画面（ルート）へ移動
-        // router.push('/') だと同じページのため状態がリセットされない可能性があるので
-        // 明示的にリロードするか、単純に '/' へ遷移させる。
-        // ここではユーザーの指示通り「ログイン画面に移動」として '/' を指定。
+        // 🔒 画像認証成功ルート
+        if (result.token) {
+          // ⭕ クッキーにトークンだけを保存
+          Cookies.set('auth_token', result.token, { expires: 1, secure: false, sameSite: 'lax' });
+        }
         router.push('/main_room');
       } else {
         setErrorMessage(await readApiError(response, "パスワードが違います。"));
         setIsLoading(false);
       }
-
     } catch (err) {
       setErrorMessage('えらーがはっせいしました。');
       setIsLoading(false);
@@ -471,78 +445,77 @@ function LoginStep2({ username, imageList, imageNumbers, onBack }: LoginStep2Pro
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f0f9ff] p-4 font-sans">
-      <div className="w-full max-w-md p-8 bg-white rounded-3xl shadow-lg">
-        <h3 className="text-center text-3xl font-bold text-[#0ea5e9] mb-2 tracking-tight">ひみつのパスワード</h3>
-        <p className="text-center text-slate-500 mb-6">とうろくした しゃしん 3つえらんでね</p>
+      <div className="min-h-screen flex items-center justify-center bg-[#f0f9ff] p-4 font-sans">
+        <div className="w-full max-w-md p-8 bg-white rounded-3xl shadow-lg">
+          <h3 className="text-center text-3xl font-bold text-[#0ea5e9] mb-2 tracking-tight">ひみつのパスワード</h3>
+          <p className="text-center text-slate-500 mb-6">とうろくした しゃしん 3つえらんでね</p>
 
-        {errorMessage && (
-          <p className="text-red-500 border border-red-300 bg-red-50 p-3 mb-4 text-sm rounded-xl text-center">
-            {errorMessage}
-          </p>
-        )}
-        {successMessage && (
-          <p className="text-green-600 border border-green-300 bg-green-50 p-3 mb-4 text-sm rounded-xl text-center">
-            {successMessage}
-          </p>
-        )}
+          {errorMessage && (
+              <p className="text-red-500 border border-red-300 bg-red-50 p-3 mb-4 text-sm rounded-xl text-center">
+                {errorMessage}
+              </p>
+          )}
+          {successMessage && (
+              <p className="text-green-600 border border-green-300 bg-green-50 p-3 mb-4 text-sm rounded-xl text-center">
+                {successMessage}
+              </p>
+          )}
 
-        <form onSubmit={handleLogin}>
-          <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-4">
-            {imageList.map((path, index) => (
-              <div key={index} className="flex justify-center">
-                <label className={`relative cursor-pointer group w-full ${isLoading || successMessage ? 'cursor-not-allowed' : ''}`}>
-                  <input
-                    type="checkbox"
-                    className="absolute opacity-0 w-0 h-0"
-                    checked={selectedIndices.includes(index)}
-                    onChange={() => toggleImageSelection(index)}
-                    disabled={isLoading || !!successMessage}
-                  />
-                  <img
-                    src={`${API_URL}/${path}`}
-                    alt={`img-pw-${index}`}
-                    className={`w-full aspect-square object-contain p-1 rounded-2xl border-4 transition-all duration-200 
+          <form onSubmit={handleLogin}>
+            <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-4">
+              {imageList.map((path, index) => (
+                  <div key={index} className="flex justify-center">
+                    <label className={`relative cursor-pointer group w-full ${isLoading || successMessage ? 'cursor-not-allowed' : ''}`}>
+                      <input
+                          type="checkbox"
+                          className="absolute opacity-0 w-0 h-0"
+                          checked={selectedIndices.includes(index)}
+                          onChange={() => toggleImageSelection(index)}
+                          disabled={isLoading || !!successMessage}
+                      />
+                      <img
+                          src={`${API_URL}/${path}`}
+                          alt={`img-pw-${index}`}
+                          className={`w-full aspect-square object-contain p-1 rounded-2xl border-4 transition-all duration-200 
                       ${selectedIndices.includes(index)
-                        ? "border-sky-400 ring-4 ring-sky-100 scale-105"
-                        : "border-slate-200 group-hover:border-sky-300 group-hover:scale-105"
-                      }
+                              ? "border-sky-400 ring-4 ring-sky-100 scale-105"
+                              : "border-slate-200 group-hover:border-sky-300 group-hover:scale-105"
+                          }
                       ${isLoading || successMessage ? 'opacity-50' : ''}
                     `}
-                  />
-                </label>
-              </div>
-            ))}
+                      />
+                    </label>
+                  </div>
+              ))}
+            </div>
+
+            <p className={`text-center font-semibold mb-5 min-h-[1.5rem] ${statusMessage.color}`}>
+              {statusMessage.text}
+            </p>
+
+            <button
+                type="submit"
+                disabled={selectedIndices.length !== 3 || isLoading || !!successMessage}
+                className="w-full bg-[#34d399] hover:bg-[#10b981] text-white font-bold py-4 rounded-full transition-all transform hover:scale-105 shadow-lg disabled:opacity-50"
+            >
+              {isLoading ? "ろぐいんちゅう..." : "ろぐいん！"}
+            </button>
+          </form>
+
+          <hr className="my-6 border-slate-200" />
+          <div className="text-center">
+            <button
+                onClick={onBack}
+                className="text-sm font-semibold text-sky-500 hover:text-sky-600 hover:underline disabled:text-slate-400"
+                disabled={isLoading || !!successMessage}
+            >
+              ← なまえのにゅうりょくにもどる
+            </button>
           </div>
-
-          <p className={`text-center font-semibold mb-5 min-h-[1.5rem] ${statusMessage.color}`}>
-            {statusMessage.text}
-          </p>
-
-          <button
-            type="submit"
-            disabled={selectedIndices.length !== 3 || isLoading || !!successMessage}
-            className="w-full bg-[#34d399] hover:bg-[#10b981] text-white font-bold py-4 rounded-full transition-all transform hover:scale-105 shadow-lg disabled:opacity-50 disabled:scale-100"
-          >
-            {isLoading ? "ろぐいんちゅう..." : "ろぐいん！"}
-          </button>
-        </form>
-
-        <hr className="my-6 border-slate-200" />
-        <div className="text-center">
-          <button
-            onClick={onBack}
-            className="text-sm font-semibold text-sky-500 hover:text-sky-600 hover:underline disabled:text-slate-400 disabled:cursor-not-allowed disabled:no-underline"
-            disabled={isLoading || !!successMessage}
-          >
-            ← なまえのにゅうりょくにもどる
-          </button>
         </div>
       </div>
-    </div>
   );
 }
-
 
 // =================================================================
 // Main Page Component (Controller)
@@ -565,7 +538,7 @@ export default function LoginPage() {
   const handleBackToStep1 = () => {
     setLoginData(null);
     setStep(1);
-  }
+  };
 
   if (step === 1) {
     return <LoginStep1 onUserChecked={handleUserChecked} />;
@@ -575,5 +548,5 @@ export default function LoginPage() {
     return <LoginStep2 {...loginData} onBack={handleBackToStep1} />;
   }
 
-  return null; // Default fallback
+  return null;
 }

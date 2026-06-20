@@ -18,6 +18,9 @@ services:
       - PORT=3000
       # Hono等からバックエンドコンテナを呼ぶ場合は、コンテナ名「backend」で通信可能
       - BACKEND_API_URL=http://backend:8080
+      - WATCHPACK_POLLING=true
+    volumes:
+      - .:/app:Z
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 10s
