@@ -37,7 +37,7 @@ export default function MainRoomPage() {
     const [createdClassCode, setCreatedClassCode] = useState('');
 
     const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
-    const [joinSuccessMessage, setJoinSuccessMessage] = useState('');
+    const [joinSuccessMessage, setJoinSuccessMessage] = useState('')
 
     // 1. マウント時にクッキーからトークンを取得
     useEffect(() => {
@@ -629,6 +629,7 @@ export default function MainRoomPage() {
                 </div>
             )}
         </div>
+
     );
 }
 

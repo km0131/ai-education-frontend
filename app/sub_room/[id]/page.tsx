@@ -3,55 +3,89 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
-import { securedFetch } from '@/src/lib/api';
+import { API_URL, securedFetch } from '@/src/lib/api';
+import Cookies from 'js-cookie';
 
 // --- 型定義 ---
 interface AiSet {
     name: string;
-    desc: string;
     images: File[];
     previewUrls: string[];
 }
 
-interface CreatedAiModel {
-    id: string;
-    title: string;
-    description: string;
-    creator_name: string;
-    image_count: number;
-    theme_color: string;
-    updata_time: string;
+type AiModel = {
+    project_uuid: string;
+    title?: string;
+    student_name?: string;
+    status?: string;
+    updated_at?: string;
+    image_count?: number; // 拡張用
+    theme_color?: string; // 拡張用
+    [k: string]: any;
+};
+
+function normalizeModels(data: any): AiModel[] {
+    if (!data) return [];
+
+    // 修正：バックエンドのキー名 `aicard` を最優先で拾うように追加
+    if (data && Array.isArray(data.aicard)) return data.aicard;
+
+    // 既存のフォールバック用
+    if (data && Array.isArray(data.projects)) return data.projects;
+    if (data && Array.isArray(data.models)) return data.models;
+    if (Array.isArray(data)) return data;
+
+    if (typeof data === "object") {
+        const numericKeys = Object.keys(data).filter(k => String(Number(k)) === k);
+        if (numericKeys.length) return numericKeys.map(k => data[k]);
+        if (Array.isArray(data.results)) return data.results;
+    }
+    return [];
 }
 
 function SubRoomContent() {
     const router = useRouter();
     const params = useParams();
 
-    // 🌟 セッション管理用のStateはすべて廃止
     const [className, setClassName] = useState<string>('読み込み中...');
     const [inviteCode, setInviteCode] = useState<string>('');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isAiModalOpen, setIsAiModalOpen] = useState(false);
-    const [aiModels, setAiModels] = useState<CreatedAiModel[]>([]);
+
+    // 🌟 型を実際のバックエンドの返却型 AiModel[] に統一
+    const [aiModels, setAiModels] = useState<AiModel[]>([]);
     const [isLoadingAi, setIsLoadingAi] = useState(true);
+    const [token, setToken] = useState<string | null>(null);
     const [aiSets, setAiSets] = useState<AiSet[]>([
-        { name: '', desc: '', images: [], previewUrls: [] }
+        { name: '', images: [], previewUrls: [] }
     ]);
+    const [aiProjectTitle, setAiProjectTitle] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [userInfo, setUserInfo] = useState<{ name: string; role: 'teacher' | 'student' | string } | null>(null);
+    const [selectedProject, setSelectedProject] = useState<AiModel | null>(null);
 
-    // 🌟 データの同期はparams（URLのID）の確定のみをトリガーにする
+    // 1. マウント時にクッキーからトークンを取得
+    useEffect(() => {
+        const savedToken = Cookies.get('auth_token');
+        if (!savedToken) {
+            router.push('/');
+            return;
+        }
+        setToken(savedToken);
+    }, [router]);
+
+    // 2. ルームデータ・ユーザー情報・AIモデルカード一覧をまとめてフェッチ
     useEffect(() => {
         if (!params) return;
         const classId = params.id as string;
 
         const fetchRoomData = async () => {
+            setIsLoadingAi(true);
             try {
-                console.log(`[Debug] APIリクエスト開始: /api/v1/courses/${classId}`);
+                console.log(`[Debug] クラスデータ取得開始: /api/v1/courses/${classId}`);
 
                 // ① クラス情報の取得
                 const courseRes = await securedFetch(`/api/v1/courses/${classId}`, { method: 'GET' });
-
                 if (courseRes.status === 401 || courseRes.status === 403) {
                     router.push('/');
                     return;
@@ -66,35 +100,36 @@ function SubRoomContent() {
                     return;
                 }
 
-                // 🌟 ② ユーザー情報の取得（独立したAPIを正しく叩く）
+                // ② ログインユーザー情報の取得
                 const userRes = await securedFetch('/api/v1/user', { method: 'GET' });
-                if (userRes.status === 401 || userRes.status === 403) {
-                    router.push('/');
-                    return;
-                }
-
                 if (userRes.ok) {
                     const userData = await userRes.json();
-                    console.log("[Debug] 受信したユーザーデータ:", userData);
-
-                    // バックエンドのJSONキー（例: name や role, もしくは user_name など）に合わせてセット
-                    // 💡 もしGo側が "user_name" で返している場合は `userData.user_name` に書き換えてください
                     setUserInfo({
-                        name: userData.UserName, // キー名を合わせる
-                        role: userData.IsTeacher ? 'teacher' : 'student' // 真偽値から文字列へ変換
+                        name: userData.UserName,
+                        role: userData.IsTeacher ? 'teacher' : 'student'
                     });
                 }
 
-                // 🌟 ③ みんなが作成したAIの一覧を取得（パスを修正）
-                const aiRes = await securedFetch(`/api/v1/courses/${classId}/ai_models`, { method: 'GET' });
-                if (aiRes.status === 401 || aiRes.status === 403) {
-                    router.push('/');
-                    return;
-                }
+                // ③ 🌟 新しく設計した POST /api/v1/ai/aicard を使って一括取得
+                const savedToken = Cookies.get('auth_token');
+                const aiRes = await securedFetch(`/api/v1/ai/aicard`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${savedToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        course_id: Number(classId)
+                    }),
+                });
 
                 if (aiRes.ok) {
                     const aiData = await aiRes.json();
-                    setAiModels(aiData.models || []);
+                    // 🌟 データの揺らぎをノーマライズして安全にセット
+                    const models = normalizeModels(aiData);
+                    setAiModels(models);
+                } else if (aiRes.status === 403) {
+                    console.warn("このクラスへのアクセス権限がありません。");
                 }
             } catch (error) {
                 console.error("[Debug] fetchRoomData例外:", error);
@@ -105,15 +140,14 @@ function SubRoomContent() {
 
         fetchRoomData();
     }, [params, router]);
-    // 安全な型ガード
+
     if (!params) {
         return <div className="min-h-screen bg-gray-50 flex items-center justify-center">読み込み中...</div>;
     }
     const classId = params.id as string;
 
-    // --- 各種ハンドラー関数（ロジックは維持） ---
     const handleAddSet = () => {
-        setAiSets(prev => [...prev, { name: '', desc: '', images: [], previewUrls: [] }]);
+        setAiSets(prev => [...prev, { name: '', images: [], previewUrls: [] }]);
     };
 
     const handleRemoveSet = (index: number) => {
@@ -158,93 +192,86 @@ function SubRoomContent() {
         }));
     };
 
-    const resizeImage = (file: File, width: number, height: number): Promise<Blob> => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = (event) => {
-                const img = new Image();
-                img.src = event.target?.result as string;
-                img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        ctx.drawImage(img, 0, 0, width, height);
-                        canvas.toBlob((blob) => {
-                            if (blob) resolve(blob);
-                            else reject(new Error('Blob conversion failed'));
-                        }, 'image/jpeg', 0.9);
-                    } else {
-                        reject(new Error('Canvas context failed'));
-                    }
-                };
-            };
-            reader.onerror = (error) => reject(error);
-        });
-    };
-
-    const blobToBase64 = (blob: Blob): Promise<string> => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-    };
-
     const handleAiSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (isSubmitting) return;
 
-        const isValid = aiSets.every(set => set.name && set.desc && set.images.length > 0);
-        if (!isValid) {
-            alert('すべてのカテゴリに名前、説明、画像を1枚以上入れてください');
-            return;
-        }
+        if (!aiProjectTitle) { alert('プロジェクトタイトルを入力してください'); return; }
+
+        const isValid = aiSets.every(set => set.name && set.images.length > 0);
+        if (!isValid) { alert('すべてのカテゴリに名前と画像を1枚以上入れてください'); return; }
 
         setIsSubmitting(true);
         try {
-            const processedSets = await Promise.all(aiSets.map(async (set) => {
-                const base64Images = await Promise.all(
-                    set.images.map(async (img) => {
-                        const blob = await resizeImage(img, 300, 300);
-                        return await blobToBase64(blob);
-                    })
-                );
+            const savedToken = Cookies.get('auth_token');
+            const uploadSessionId = crypto.randomUUID();
 
-                return {
-                    name: set.name,
-                    description: set.desc,
-                    images: base64Images
-                };
-            }));
+            for (let setIdx = 0; setIdx < aiSets.length; setIdx++) {
+                const set = aiSets[setIdx];
+                const categoryId = (setIdx + 1);
 
-            const response = await fetch('/api/ai_create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    classId: classId,
-                    aiSets: processedSets
-                }),
-            });
+                for (let imgIdx = 0; imgIdx < set.images.length; imgIdx++) {
+                    const file = set.images[imgIdx];
 
-            if (response.status === 401 || response.status === 403) {
-                router.push('/');
-                return;
+                    const formData = new FormData();
+                    formData.append('course_id', classId);
+                    formData.append('category_id', categoryId.toString());
+                    formData.append('category_title', set.name);
+                    formData.append('title', aiProjectTitle);
+                    formData.append('upload_session_id', uploadSessionId);
+                    formData.append('file', file);
+
+                    console.log(`[Debug] 送信中: カテゴリ=${set.name}(${categoryId}), 画像=${imgIdx + 1}/${set.images.length}`);
+
+                    const response = await fetch(`${API_URL}/api/v1/ai/upload_image`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${savedToken}`,
+                        },
+                        body: formData,
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.error || `${set.name} の画像 ${imgIdx + 1} 枚目の送信に失敗しました`);
+                    }
+                }
             }
 
-            if (!response.ok) throw new Error('通信エラーが発生しました');
-
-            alert('AIの学習を開始しました！');
+            alert('すべての画像データの送信とAIの分析を開始しました！');
             setIsAiModalOpen(false);
-            setAiSets([{ name: '', desc: '', images: [], previewUrls: [] }]);
-        } catch (error) {
+            setAiProjectTitle('');
+            setAiSets([{ name: '', images: [], previewUrls: [] }]);
+
+            // 🌟 送信完了後に画面の一覧をリロードする処理を入れると親切です
+            router.refresh();
+        } catch (error: any) {
             console.error(error);
-            alert('送信に失敗しました');
+            alert(`エラーが発生しました: ${error.message || '送信失敗'}`);
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    const handleMenuAction = (actionType: string, ai: AiModel) => {
+        setSelectedProject(null); // メニューモーダルを閉じる
+
+        switch (actionType) {
+            case 'train':
+                console.log("AIの学習開始:", ai.project_uuid);
+                break;
+            case 'explanation':
+                console.log("説明文の作成:", ai.project_uuid);
+                break;
+            case 'view_images':
+                console.log("登録画像を見る:", ai.project_uuid);
+                break;
+            case 'analytics':
+                console.log("AIの性能を表示:", ai.project_uuid);
+                break;
+            case 'certificate':
+                console.log("終了証書を出力:", ai.project_uuid);
+                break;
         }
     };
 
@@ -257,11 +284,8 @@ function SubRoomContent() {
                         <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors">
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
                         </button>
-
                         <div className="flex items-center gap-4">
                             <h1 className="text-2xl font-bold text-gray-800 tracking-tight">{className}</h1>
-
-                            {/* 先生の時のみ表示するよう userInfo.role をチェック */}
                             {userInfo?.role === 'teacher' && inviteCode && (
                                 <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-3 py-1 rounded-xl shadow-sm">
                                     <span className="text-[11px] font-black text-amber-700 tracking-wider uppercase">参加コード:</span>
@@ -280,21 +304,14 @@ function SubRoomContent() {
                         >
                             <span>✨ AIを新しく作る</span>
                         </button>
-
                         <div className="h-6 w-[1px] bg-gray-200" />
-
-                        {/* 🌟 3. マイページ部分をユーザー情報表示に書き換え */}
                         <div className="flex items-center gap-3">
                             {userInfo ? (
                                 <>
                                     {userInfo.role === 'teacher' ? (
-                                        <span className="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 rounded-md font-bold border border-amber-100">
-                                            先生
-                                        </span>
+                                        <span className="text-xs px-2.5 py-1 bg-amber-50 text-amber-700 rounded-md font-bold border border-amber-100">先生</span>
                                     ) : (
-                                        <span className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold border border-indigo-100">
-                                            生徒
-                                        </span>
+                                        <span className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md font-bold border border-indigo-100">生徒</span>
                                     )}
                                     <div className="text-sm font-bold text-gray-700">{userInfo.name} さん</div>
                                 </>
@@ -305,78 +322,6 @@ function SubRoomContent() {
                     </div>
                 </div>
             </header>
-
-            {/* Main Content */}
-            <main className="flex-1 max-w-7xl mx-auto w-full p-6">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-xl font-bold text-gray-700">みんなが作ったAIモデル</h2>
-                </div>
-
-                {isLoadingAi ? (
-                    <div className="text-center py-20 text-gray-400 font-medium">AIモデルを読み込んでいます...</div>
-                ) : aiModels.length === 0 ? (
-                    <div className="bg-white border-2 border-dashed border-gray-200 rounded-[2rem] p-16 text-center max-w-xl mx-auto mt-10">
-                        <p className="text-gray-500 font-bold mb-4 text-lg">まだこのクラスにAIモデルがありません</p>
-                        <p className="text-sm text-gray-400 mb-6">右上のボタンから最初のAIを作ってみましょう！</p>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {aiModels.map((ai) => {
-                            const validTheme = ai.theme_color || 'indigo';
-                            const themeBg = {
-                                blue: 'bg-blue-600', green: 'bg-emerald-600', indigo: 'bg-indigo-600',
-                                purple: 'bg-purple-600', pink: 'bg-pink-600', orange: 'bg-orange-600'
-                            }[validTheme] || 'bg-indigo-600';
-
-                            return (
-                                <div key={ai.id} className="group bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-all duration-200 flex flex-col h-76 relative">
-                                    <div className={`${themeBg} h-28 p-5 relative flex flex-col justify-between text-white`}>
-                                        <h3 className="text-2xl font-bold truncate pr-16 hover:underline cursor-pointer">
-                                            {ai.title}
-                                        </h3>
-                                        <p className="text-sm font-medium opacity-90 truncate">
-                                            作った人: {ai.creator_name}
-                                        </p>
-                                    </div>
-
-                                    <div className="absolute top-20 right-4 w-16 h-16 bg-white rounded-full p-1 shadow-md z-10">
-                                        <div className={`${themeBg} w-full h-full rounded-full flex items-center justify-center text-white text-2xl font-bold opacity-90`}>
-                                            {ai.creator_name ? ai.creator_name.charAt(0) : 'A'}
-                                        </div>
-                                    </div>
-
-                                    <div className="p-5 pt-10 flex-1 flex flex-col justify-between">
-                                        <p className="text-sm text-gray-600 line-clamp-3 leading-relaxed">
-                                            {ai.description}
-                                        </p>
-                                    </div>
-
-                                    <div className="px-5 py-3 border-t border-gray-100 flex justify-between items-center bg-gray-50/50 relative z-20">
-                                        <div className="flex flex-col gap-0.5">
-                                            <div className="flex items-center gap-1.5 mb-0.5">
-                                                <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded-md font-bold">
-                                                    画像 {ai.image_count || 0}枚
-                                                </span>
-                                            </div>
-                                            {ai.updata_time && (
-                                                <p className="text-[11px] text-gray-400 font-medium">
-                                                    作成: {new Date(ai.updata_time).toLocaleDateString('ja-JP', {
-                                                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-                                                })}
-                                                </p>
-                                            )}
-                                        </div>
-
-                                        <button className="px-3 py-1.5 bg-white border border-gray-200 shadow-sm rounded-lg text-xs font-bold text-gray-600 hover:bg-gray-50 transition-colors">
-                                            テストする
-                                        </button>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </main>
 
             {/* Sidebar */}
             {isSidebarOpen && (
@@ -402,6 +347,17 @@ function SubRoomContent() {
                             <button onClick={() => setIsAiModalOpen(false)} className="hover:bg-white/20 p-2 rounded-full transition-all">✕</button>
                         </div>
                         <form onSubmit={handleAiSubmit} className="p-8 space-y-8 overflow-y-auto max-h-[75vh]">
+                            <div>
+                                <label className="block text-indigo-900 font-black mb-2 px-2">プロジェクトタイトル</label>
+                                <input
+                                    className="w-full p-4 border-2 border-indigo-100 rounded-2xl font-bold text-gray-800 focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-gray-300"
+                                    placeholder="例：福岡の観光地分類プロジェクト"
+                                    value={aiProjectTitle}
+                                    onChange={(e) => setAiProjectTitle(e.target.value)}
+                                    required
+                                />
+                            </div>
+
                             {aiSets.map((set, setIdx) => (
                                 <div key={setIdx} className="p-8 bg-indigo-50/30 rounded-[2.5rem] border-2 border-indigo-100/50 flex flex-col gap-6 relative">
                                     {aiSets.length > 1 && (
@@ -429,13 +385,6 @@ function SubRoomContent() {
                                         onChange={(e) => handleSetFieldChange(setIdx, 'name', e.target.value)}
                                         required
                                     />
-                                    <textarea
-                                        className="w-full p-4 border-2 border-indigo-50 rounded-2xl font-bold text-gray-800 focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all resize-none h-28 placeholder:text-gray-300"
-                                        placeholder="AIが認識した時の説明文"
-                                        value={set.desc}
-                                        onChange={(e) => handleSetFieldChange(setIdx, 'desc', e.target.value)}
-                                        required
-                                    />
                                 </div>
                             ))}
                             <button type="button" onClick={handleAddSet} className="w-full py-5 border-4 border-dashed border-indigo-100 rounded-[2rem] text-indigo-500 font-black hover:bg-indigo-50 hover:border-indigo-200 transition-all">+ カテゴリを追加</button>
@@ -447,6 +396,198 @@ function SubRoomContent() {
                                 {isSubmitting ? '学習データを送信中...' : 'AIの学習を開始する'}
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* --- Main Content --- */}
+            <main className="flex-1 max-w-7xl mx-auto w-full p-6">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-gray-700">みんなが作ったAIモデル</h2>
+                </div>
+
+                {isLoadingAi ? (
+                    <div className="text-center py-20 text-gray-400 font-medium animate-pulse">AIモデルを読み込んでいます...</div>
+                ) : aiModels.length === 0 ? (
+                    <div className="bg-white border-2 border-dashed border-gray-200 rounded-[2rem] p-16 text-center max-w-xl mx-auto mt-10">
+                        <p className="text-gray-500 font-bold mb-4 text-lg">まだこのクラスにAIモデルがありません</p>
+                        <p className="text-sm text-gray-400 mb-6">右上のボタンから最初のAIを作ってみましょう！</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {aiModels.map((ai) => {
+                            // 🌟 Go側から返ってくる最新ステータスに応じてバッジ色やテーマを最適化
+                            const isPending = ai.status === 'pending';
+                            const validTheme = ai.theme_color || 'indigo';
+                            const themeBg = {
+                                blue: 'bg-blue-600', green: 'bg-emerald-600', indigo: 'bg-indigo-600',
+                                purple: 'bg-purple-600', pink: 'bg-pink-600', orange: 'bg-orange-600'
+                            }[validTheme] || 'bg-indigo-600';
+
+                            return (
+                                <div
+                                    key={ai.project_uuid}
+                                    onClick={() => setSelectedProject(ai)}
+                                    className="group bg-white rounded-3xl border border-gray-100 overflow-hidden hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 flex flex-col h-76 relative cursor-pointer"
+                                >
+                                    {/* カードヘッダー */}
+                                    <div className={`${themeBg} h-28 p-5 relative flex flex-col justify-between text-white`}>
+                                        <h3 className="text-xl font-black truncate pr-16">{ai.title || "無題のAI"}</h3>
+                                        <p className="text-xs font-bold opacity-90 truncate">作った人: {ai.student_name || "わからない"}</p>
+                                    </div>
+
+                                    {/* 作成者アイコン風バッジ */}
+                                    <div className="absolute top-20 right-4 w-14 h-14 bg-white rounded-full p-1 shadow-md z-10">
+                                        <div className={`${themeBg} w-full h-full rounded-full flex items-center justify-center text-white text-xl font-black opacity-95`}>
+                                            {ai.student_name ? ai.student_name.charAt(0) : 'A'}
+                                        </div>
+                                    </div>
+
+                                    {/* コンテンツ */}
+                                    <div className="p-5 pt-8 flex-1 flex flex-col justify-between">
+                                        <div className="flex flex-col gap-2">
+                                            {/* 🌟 バックエンド直結のステータス表示をバッジ化 */}
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[11px] text-gray-400 font-bold">ステータス:</span>
+                                                <span className={`text-xs px-2.5 py-0.5 rounded-full font-black ${
+                                                    isPending
+                                                        ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse'
+                                                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                }`}>
+                                                    {ai.status === 'pending' ? '⏳ じゅんび中' : (ai.status || '✅ かんりょう')}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* フッター情報 */}
+                                    <div className="px-5 py-4 border-t border-gray-50 flex justify-between items-center bg-gray-50/30 relative z-20">
+                                        <div className="flex flex-col gap-0.5">
+                                            {ai.updated_at && (
+                                                <p className="text-[11px] text-gray-400 font-bold">
+                                                    更新: {new Date(ai.updated_at).toLocaleDateString('ja-JP', {
+                                                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                                                })}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); console.log("即時テスト実行:", ai.project_uuid); }}
+                                            className="px-3 py-1.5 bg-white border border-gray-200 shadow-sm rounded-xl text-xs font-black text-gray-600 hover:bg-gray-50 hover:text-indigo-600 transition-all relative z-30"
+                                        >
+                                            テストする
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </main>
+
+            {/* AI操作メニューモーダル */}
+            {selectedProject && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedProject(null)}></div>
+                    <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md z-10 overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
+
+                        <div className="bg-indigo-600 p-6 flex justify-between items-center text-white">
+                            <div>
+                                <span className="text-xs font-bold text-indigo-200 uppercase tracking-wider">AIモデルメニュー</span>
+                                <h3 className="text-xl font-black truncate max-w-[280px]">
+                                    {selectedProject.title}
+                                </h3>
+                            </div>
+                            <button onClick={() => setSelectedProject(null)} className="hover:bg-white/20 p-2 rounded-full transition-all text-xl">✕</button>
+                        </div>
+
+                        {/* スクロール可能にしてボタンが増えても画面外にはみ出さないように `max-h` を指定 */}
+                        <div className="p-6 space-y-3 bg-gray-50/50 overflow-y-auto max-h-[70vh]">
+
+                            {/* 1. AIの学習開始 */}
+                            <button
+                                onClick={() => handleMenuAction('train', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-indigo-50 border-2 border-indigo-100/50 hover:border-indigo-200 text-indigo-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-indigo-50 group-hover:bg-indigo-100 p-2 rounded-xl transition-colors">🤖</span>
+                                <div>
+                                    <p className="text-sm font-black">AIの学習開始</p>
+                                    <p className="text-[11px] text-indigo-400 font-medium mt-0.5">あつめた画像を使って新しく学習しなおすよ</p>
+                                </div>
+                            </button>
+
+                            {/* 🌟 2. AIを試す（新規追加） */}
+                            <button
+                                onClick={() => handleMenuAction('play', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-sky-50 border-2 border-sky-100/50 hover:border-sky-200 text-sky-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-sky-50 group-hover:bg-sky-100 p-2 rounded-xl transition-colors">🎮</span>
+                                <div>
+                                    <p className="text-sm font-black">AIを試す</p>
+                                    <p className="text-[11px] text-sky-500 font-medium mt-0.5">カメラや画像を使って、このAIの動きを体験してみよう</p>
+                                </div>
+                            </button>
+
+                            {/* 🌟 3. AIの性能テスト（新規追加） */}
+                            <button
+                                onClick={() => handleMenuAction('test', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-rose-50 border-2 border-rose-100/50 hover:border-rose-200 text-rose-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-rose-50 group-hover:bg-rose-100 p-2 rounded-xl transition-colors">🎯</span>
+                                <div>
+                                    <p className="text-sm font-black">AIの性能テスト</p>
+                                    <p className="text-[11px] text-rose-500 font-medium mt-0.5">テスト用の画像を選んで、AIが正しく見分けられるか挑戦！</p>
+                                </div>
+                            </button>
+
+                            {/* 4. 説明文の作成 */}
+                            <button
+                                onClick={() => handleMenuAction('explanation', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-amber-50 border-2 border-amber-100/50 hover:border-amber-200 text-amber-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-amber-50 group-hover:bg-amber-100 p-2 rounded-xl transition-colors">📝</span>
+                                <div>
+                                    <p className="text-sm font-black">説明文の作成</p>
+                                    <p className="text-[11px] text-amber-500 font-medium mt-0.5">このAIモデルがどんなものか説明を追加する</p>
+                                </div>
+                            </button>
+
+                            {/* 5. 登録画像を見る */}
+                            <button
+                                onClick={() => handleMenuAction('view_images', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-blue-50 border-2 border-blue-100/50 hover:border-blue-200 text-blue-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-blue-50 group-hover:bg-blue-100 p-2 rounded-xl transition-colors">🖼️</span>
+                                <div>
+                                    <p className="text-sm font-black">登録画像を見る</p>
+                                    <p className="text-[11px] text-blue-400 font-medium mt-0.5">各カテゴリに保存されている写真をチェックする</p>
+                                </div>
+                            </button>
+
+                            {/* 6. AIの性能を表示 */}
+                            <button
+                                onClick={() => handleMenuAction('analytics', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-purple-50 border-2 border-purple-100/50 hover:border-purple-200 text-purple-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-purple-50 group-hover:bg-purple-100 p-2 rounded-xl transition-colors">📊</span>
+                                <div>
+                                    <p className="text-sm font-black">AIの性能を表示</p>
+                                    <p className="text-[11px] text-purple-400 font-medium mt-0.5">正解率のグラフやテスト分析結果をみる</p>
+                                </div>
+                            </button>
+
+                            {/* 7. 終了証書を出力 */}
+                            <button
+                                onClick={() => handleMenuAction('certificate', selectedProject)}
+                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-emerald-50 border-2 border-emerald-100/50 hover:border-emerald-200 text-emerald-900 rounded-2xl transition-all shadow-sm text-left group"
+                            >
+                                <span className="text-2xl bg-emerald-50 group-hover:bg-emerald-100 p-2 rounded-xl transition-colors">🎓</span>
+                                <div>
+                                    <p className="text-sm font-black">終了証書を出力</p>
+                                    <p className="text-[11px] text-emerald-500 font-medium mt-0.5">AIを作り終えたがんばりの証明書を印刷する</p>
+                                </div>
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
