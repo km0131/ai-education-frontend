@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { API_URL, securedFetch } from '@/src/lib/api';
@@ -19,18 +19,14 @@ type AiModel = {
     student_name?: string;
     status?: string;
     updated_at?: string;
-    image_count?: number; // 拡張用
-    theme_color?: string; // 拡張用
+    image_count?: number;
+    theme_color?: string;
     [k: string]: any;
 };
 
 function normalizeModels(data: any): AiModel[] {
     if (!data) return [];
-
-    // 修正：バックエンドのキー名 `aicard` を最優先で拾うように追加
     if (data && Array.isArray(data.aicard)) return data.aicard;
-
-    // 既存のフォールバック用
     if (data && Array.isArray(data.projects)) return data.projects;
     if (data && Array.isArray(data.models)) return data.models;
     if (Array.isArray(data)) return data;
@@ -43,7 +39,7 @@ function normalizeModels(data: any): AiModel[] {
     return [];
 }
 
-function SubRoomContent() {
+export default function SubRoomContent() {
     const router = useRouter();
     const params = useParams();
 
@@ -52,7 +48,6 @@ function SubRoomContent() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isAiModalOpen, setIsAiModalOpen] = useState(false);
 
-    // 🌟 型を実際のバックエンドの返却型 AiModel[] に統一
     const [aiModels, setAiModels] = useState<AiModel[]>([]);
     const [isLoadingAi, setIsLoadingAi] = useState(true);
     const [token, setToken] = useState<string | null>(null);
@@ -64,7 +59,7 @@ function SubRoomContent() {
     const [userInfo, setUserInfo] = useState<{ name: string; role: 'teacher' | 'student' | string } | null>(null);
     const [selectedProject, setSelectedProject] = useState<AiModel | null>(null);
 
-    // 1. マウント時にクッキーからトークンを取得
+    // マウント時にクッキーからトークンを取得
     useEffect(() => {
         const savedToken = Cookies.get('auth_token');
         if (!savedToken) {
@@ -74,7 +69,7 @@ function SubRoomContent() {
         setToken(savedToken);
     }, [router]);
 
-    // 2. ルームデータ・ユーザー情報・AIモデルカード一覧をまとめてフェッチ
+    // ルームデータ・ユーザー情報・AIモデルカード一覧を一括取得
     useEffect(() => {
         if (!params) return;
         const classId = params.id as string;
@@ -82,8 +77,6 @@ function SubRoomContent() {
         const fetchRoomData = async () => {
             setIsLoadingAi(true);
             try {
-                console.log(`[Debug] クラスデータ取得開始: /api/v1/courses/${classId}`);
-
                 // ① クラス情報の取得
                 const courseRes = await securedFetch(`/api/v1/courses/${classId}`, { method: 'GET' });
                 if (courseRes.status === 401 || courseRes.status === 403) {
@@ -110,7 +103,7 @@ function SubRoomContent() {
                     });
                 }
 
-                // ③ 🌟 新しく設計した POST /api/v1/ai/aicard を使って一括取得
+                // ③ aicard 一覧の取得
                 const savedToken = Cookies.get('auth_token');
                 const aiRes = await securedFetch(`/api/v1/ai/aicard`, {
                     method: 'POST',
@@ -118,21 +111,15 @@ function SubRoomContent() {
                         'Authorization': `Bearer ${savedToken}`,
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        course_id: Number(classId)
-                    }),
+                    body: JSON.stringify({ course_id: Number(classId) }),
                 });
 
                 if (aiRes.ok) {
                     const aiData = await aiRes.json();
-                    // 🌟 データの揺らぎをノーマライズして安全にセット
-                    const models = normalizeModels(aiData);
-                    setAiModels(models);
-                } else if (aiRes.status === 403) {
-                    console.warn("このクラスへのアクセス権限がありません。");
+                    setAiModels(normalizeModels(aiData));
                 }
             } catch (error) {
-                console.error("[Debug] fetchRoomData例外:", error);
+                console.error("[Error] fetchRoomData 例外:", error);
             } finally {
                 setIsLoadingAi(false);
             }
@@ -146,12 +133,29 @@ function SubRoomContent() {
     }
     const classId = params.id as string;
 
+    // オブジェクトURLのメモリ解放ユーティリティ
+    const revokeAllPreviews = (sets: AiSet[]) => {
+        sets.forEach(set => {
+            set.previewUrls.forEach(url => URL.revokeObjectURL(url));
+        });
+    };
+
+    // モーダルを閉じる際の状態クリーンアップ
+    const handleCloseAiModal = () => {
+        revokeAllPreviews(aiSets);
+        setAiProjectTitle('');
+        setAiSets([{ name: '', images: [], previewUrls: [] }]);
+        setIsAiModalOpen(false);
+    };
+
     const handleAddSet = () => {
         setAiSets(prev => [...prev, { name: '', images: [], previewUrls: [] }]);
     };
 
     const handleRemoveSet = (index: number) => {
         if (aiSets.length > 1) {
+            // 削除されるセットのプレビューURLを解放
+            aiSets[index].previewUrls.forEach(url => URL.revokeObjectURL(url));
             setAiSets(prev => prev.filter((_, i) => i !== index));
         }
     };
@@ -192,6 +196,7 @@ function SubRoomContent() {
         }));
     };
 
+    // 画像アップロード & AIリクエスト送信
     const handleAiSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (isSubmitting) return;
@@ -205,6 +210,9 @@ function SubRoomContent() {
         try {
             const savedToken = Cookies.get('auth_token');
             const uploadSessionId = crypto.randomUUID();
+
+            // アップロード用プロミスの配列を作成（並行処理で効率化）
+            const uploadPromises: Promise<Response>[] = [];
 
             for (let setIdx = 0; setIdx < aiSets.length; setIdx++) {
                 const set = aiSets[setIdx];
@@ -221,29 +229,27 @@ function SubRoomContent() {
                     formData.append('upload_session_id', uploadSessionId);
                     formData.append('file', file);
 
-                    console.log(`[Debug] 送信中: カテゴリ=${set.name}(${categoryId}), 画像=${imgIdx + 1}/${set.images.length}`);
-
-                    const response = await fetch(`${API_URL}/api/v1/ai/upload_image`, {
+                    const uploadPromise = fetch(`${API_URL}/api/v1/ai/upload_image`, {
                         method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${savedToken}`,
-                        },
+                        headers: { 'Authorization': `Bearer ${savedToken}` },
                         body: formData,
+                    }).then(async (res) => {
+                        if (!res.ok) {
+                            const errorData = await res.json().catch(() => ({}));
+                            throw new Error(errorData.error || `${set.name} の画像送信に失敗しました`);
+                        }
+                        return res;
                     });
 
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.error || `${set.name} の画像 ${imgIdx + 1} 枚目の送信に失敗しました`);
-                    }
+                    uploadPromises.push(uploadPromise);
                 }
             }
 
-            alert('すべての画像データの送信とAIの分析を開始しました！');
-            setIsAiModalOpen(false);
-            setAiProjectTitle('');
-            setAiSets([{ name: '', images: [], previewUrls: [] }]);
+            // すべてのアップロードを並行して実行
+            await Promise.all(uploadPromises);
 
-            // 🌟 送信完了後に画面の一覧をリロードする処理を入れると親切です
+            alert('すべての画像データの送信とAIの分析を開始しました！');
+            handleCloseAiModal();
             router.refresh();
         } catch (error: any) {
             console.error(error);
@@ -253,12 +259,21 @@ function SubRoomContent() {
         }
     };
 
+    // メニューアクションの統合ハンドリング
     const handleMenuAction = (actionType: string, ai: AiModel) => {
-        setSelectedProject(null); // メニューモーダルを閉じる
+        setSelectedProject(null);
 
         switch (actionType) {
             case 'train':
                 console.log("AIの学習開始:", ai.project_uuid);
+                break;
+            case 'play':
+                console.log("AIを試す (体験画面へ移行):", ai.project_uuid);
+                // 例: router.push(`/ai/play/${ai.project_uuid}`);
+                break;
+            case 'test':
+                console.log("AIの性能テスト画面へ:", ai.project_uuid);
+                // 例: router.push(`/ai/test/${ai.project_uuid}`);
                 break;
             case 'explanation':
                 console.log("説明文の作成:", ai.project_uuid);
@@ -272,6 +287,8 @@ function SubRoomContent() {
             case 'certificate':
                 console.log("終了証書を出力:", ai.project_uuid);
                 break;
+            default:
+                console.warn("未知のアクションタイプ:", actionType);
         }
     };
 
@@ -340,11 +357,11 @@ function SubRoomContent() {
             {/* AI Modal */}
             {isAiModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setIsAiModalOpen(false)}></div>
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleCloseAiModal}></div>
                     <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl z-10 overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
                         <div className="bg-indigo-600 p-8 flex justify-between items-center text-white">
                             <h3 className="text-2xl font-black">AI作成リクエスト</h3>
-                            <button onClick={() => setIsAiModalOpen(false)} className="hover:bg-white/20 p-2 rounded-full transition-all">✕</button>
+                            <button onClick={handleCloseAiModal} className="hover:bg-white/20 p-2 rounded-full transition-all">✕</button>
                         </div>
                         <form onSubmit={handleAiSubmit} className="p-8 space-y-8 overflow-y-auto max-h-[75vh]">
                             <div>
@@ -368,7 +385,7 @@ function SubRoomContent() {
                                     <div className="grid grid-cols-3 gap-3">
                                         {set.previewUrls.map((url, i) => (
                                             <div key={i} className="relative aspect-square group">
-                                                <img src={url} className="w-full h-full object-cover rounded-2xl border-2 border-white shadow-md" />
+                                                <img src={url} className="w-full h-full object-cover rounded-2xl border-2 border-white shadow-md" alt="preview" />
                                                 <button type="button" onClick={() => handleSetImageRemove(setIdx, i)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-black shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
                                             </div>
                                         ))}
@@ -400,7 +417,7 @@ function SubRoomContent() {
                 </div>
             )}
 
-            {/* --- Main Content --- */}
+            {/* Main Content */}
             <main className="flex-1 max-w-7xl mx-auto w-full p-6">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-bold text-gray-700">みんなが作ったAIモデル</h2>
@@ -416,7 +433,6 @@ function SubRoomContent() {
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {aiModels.map((ai) => {
-                            // 🌟 Go側から返ってくる最新ステータスに応じてバッジ色やテーマを最適化
                             const isPending = ai.status === 'pending';
                             const validTheme = ai.theme_color || 'indigo';
                             const themeBg = {
@@ -430,23 +446,19 @@ function SubRoomContent() {
                                     onClick={() => setSelectedProject(ai)}
                                     className="group bg-white rounded-3xl border border-gray-100 overflow-hidden hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 flex flex-col h-76 relative cursor-pointer"
                                 >
-                                    {/* カードヘッダー */}
                                     <div className={`${themeBg} h-28 p-5 relative flex flex-col justify-between text-white`}>
                                         <h3 className="text-xl font-black truncate pr-16">{ai.title || "無題のAI"}</h3>
                                         <p className="text-xs font-bold opacity-90 truncate">作った人: {ai.student_name || "わからない"}</p>
                                     </div>
 
-                                    {/* 作成者アイコン風バッジ */}
                                     <div className="absolute top-20 right-4 w-14 h-14 bg-white rounded-full p-1 shadow-md z-10">
                                         <div className={`${themeBg} w-full h-full rounded-full flex items-center justify-center text-white text-xl font-black opacity-95`}>
                                             {ai.student_name ? ai.student_name.charAt(0) : 'A'}
                                         </div>
                                     </div>
 
-                                    {/* コンテンツ */}
                                     <div className="p-5 pt-8 flex-1 flex flex-col justify-between">
                                         <div className="flex flex-col gap-2">
-                                            {/* 🌟 バックエンド直結のステータス表示をバッジ化 */}
                                             <div className="flex items-center gap-2">
                                                 <span className="text-[11px] text-gray-400 font-bold">ステータス:</span>
                                                 <span className={`text-xs px-2.5 py-0.5 rounded-full font-black ${
@@ -460,7 +472,6 @@ function SubRoomContent() {
                                         </div>
                                     </div>
 
-                                    {/* フッター情報 */}
                                     <div className="px-5 py-4 border-t border-gray-50 flex justify-between items-center bg-gray-50/30 relative z-20">
                                         <div className="flex flex-col gap-0.5">
                                             {ai.updated_at && (
@@ -472,7 +483,7 @@ function SubRoomContent() {
                                             )}
                                         </div>
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); console.log("即時テスト実行:", ai.project_uuid); }}
+                                            onClick={(e) => { e.stopPropagation(); handleMenuAction('play', ai); }}
                                             className="px-3 py-1.5 bg-white border border-gray-200 shadow-sm rounded-xl text-xs font-black text-gray-600 hover:bg-gray-50 hover:text-indigo-600 transition-all relative z-30"
                                         >
                                             テストする
@@ -490,7 +501,6 @@ function SubRoomContent() {
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedProject(null)}></div>
                     <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md z-10 overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
-
                         <div className="bg-indigo-600 p-6 flex justify-between items-center text-white">
                             <div>
                                 <span className="text-xs font-bold text-indigo-200 uppercase tracking-wider">AIモデルメニュー</span>
@@ -501,10 +511,7 @@ function SubRoomContent() {
                             <button onClick={() => setSelectedProject(null)} className="hover:bg-white/20 p-2 rounded-full transition-all text-xl">✕</button>
                         </div>
 
-                        {/* スクロール可能にしてボタンが増えても画面外にはみ出さないように `max-h` を指定 */}
                         <div className="p-6 space-y-3 bg-gray-50/50 overflow-y-auto max-h-[70vh]">
-
-                            {/* 1. AIの学習開始 */}
                             <button
                                 onClick={() => handleMenuAction('train', selectedProject)}
                                 className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-indigo-50 border-2 border-indigo-100/50 hover:border-indigo-200 text-indigo-900 rounded-2xl transition-all shadow-sm text-left group"
@@ -516,7 +523,6 @@ function SubRoomContent() {
                                 </div>
                             </button>
 
-                            {/* 🌟 2. AIを試す（新規追加） */}
                             <button
                                 onClick={() => handleMenuAction('play', selectedProject)}
                                 className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-sky-50 border-2 border-sky-100/50 hover:border-sky-200 text-sky-900 rounded-2xl transition-all shadow-sm text-left group"
@@ -528,7 +534,6 @@ function SubRoomContent() {
                                 </div>
                             </button>
 
-                            {/* 🌟 3. AIの性能テスト（新規追加） */}
                             <button
                                 onClick={() => handleMenuAction('test', selectedProject)}
                                 className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-rose-50 border-2 border-rose-100/50 hover:border-rose-200 text-rose-900 rounded-2xl transition-all shadow-sm text-left group"
@@ -540,7 +545,6 @@ function SubRoomContent() {
                                 </div>
                             </button>
 
-                            {/* 4. 説明文の作成 */}
                             <button
                                 onClick={() => handleMenuAction('explanation', selectedProject)}
                                 className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-amber-50 border-2 border-amber-100/50 hover:border-amber-200 text-amber-900 rounded-2xl transition-all shadow-sm text-left group"
@@ -552,7 +556,6 @@ function SubRoomContent() {
                                 </div>
                             </button>
 
-                            {/* 5. 登録画像を見る */}
                             <button
                                 onClick={() => handleMenuAction('view_images', selectedProject)}
                                 className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-blue-50 border-2 border-blue-100/50 hover:border-blue-200 text-blue-900 rounded-2xl transition-all shadow-sm text-left group"
@@ -564,7 +567,6 @@ function SubRoomContent() {
                                 </div>
                             </button>
 
-                            {/* 6. AIの性能を表示 */}
                             <button
                                 onClick={() => handleMenuAction('analytics', selectedProject)}
                                 className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-purple-50 border-2 border-purple-100/50 hover:border-purple-200 text-purple-900 rounded-2xl transition-all shadow-sm text-left group"
@@ -575,30 +577,10 @@ function SubRoomContent() {
                                     <p className="text-[11px] text-purple-400 font-medium mt-0.5">正解率のグラフやテスト分析結果をみる</p>
                                 </div>
                             </button>
-
-                            {/* 7. 終了証書を出力 */}
-                            <button
-                                onClick={() => handleMenuAction('certificate', selectedProject)}
-                                className="w-full flex items-center gap-3.5 px-5 py-3 bg-white hover:bg-emerald-50 border-2 border-emerald-100/50 hover:border-emerald-200 text-emerald-900 rounded-2xl transition-all shadow-sm text-left group"
-                            >
-                                <span className="text-2xl bg-emerald-50 group-hover:bg-emerald-100 p-2 rounded-xl transition-colors">🎓</span>
-                                <div>
-                                    <p className="text-sm font-black">終了証書を出力</p>
-                                    <p className="text-[11px] text-emerald-500 font-medium mt-0.5">AIを作り終えたがんばりの証明書を印刷する</p>
-                                </div>
-                            </button>
                         </div>
                     </div>
                 </div>
             )}
         </div>
-    );
-}
-
-export default function SubRoomPage() {
-    return (
-        <Suspense fallback={<div className="min-h-screen bg-gray-50 flex items-center justify-center">読み込み中...</div>}>
-            <SubRoomContent />
-        </Suspense>
     );
 }

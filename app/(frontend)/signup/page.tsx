@@ -87,7 +87,7 @@ function SignUpStep2({ qrCode, registeredName, createdId, isTeacher }: SignUpSte
             カードをほぞんする
           </button>
           <Link 
-            href="/" 
+            href="/public"
             className="block w-full text-center bg-[#60a5fa] hover:bg-[#3b82f6] text-white font-bold py-3 px-4 rounded-full transition-all transform hover:scale-105 shadow-lg"
           >
             ログインがめんへ
@@ -382,7 +382,7 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
                 <hr className="my-6 border-slate-200" />
 
                 <div className="text-center text-sm">
-                <Link href="/" className="font-semibold text-sky-500 hover:text-sky-600 hover:underline">
+                <Link href="/public" className="font-semibold text-sky-500 hover:text-sky-600 hover:underline">
                     もうアカウントをもっているよ
                 </Link>
                 </div>
