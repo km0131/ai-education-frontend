@@ -1,4 +1,3 @@
-// components/room/AiModelCard.tsx
 'use client';
 
 import React from 'react';
@@ -17,10 +16,12 @@ type AiModel = {
 interface AiModelCardProps {
     ai: AiModel;
     onSelect: (ai: AiModel) => void;
+    onPlay: (ai: AiModel) => void; // 👈 追加：テストボタンが押された時の関数
 }
 
-export const AiModelCard: React.FC<AiModelCardProps> = ({ ai, onSelect }) => {
+export const AiModelCard: React.FC<AiModelCardProps> = ({ ai, onSelect, onPlay }) => {
     const isPending = ai.status === 'pending';
+    const isTraining = ai.status === 'training';
     const validTheme = ai.theme_color || 'indigo';
 
     const themeBg = {
@@ -56,7 +57,10 @@ export const AiModelCard: React.FC<AiModelCardProps> = ({ ai, onSelect }) => {
                                 ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse'
                                 : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         }`}>
-                            {ai.status === 'pending' ? '⏳ じゅんび中' : (ai.status || '✅ かんりょう')}
+                            {ai.status === 'pending' && '⏳ じゅんび中'}
+                            {ai.status === 'training' && '🔥 がくしゅうちゅう'}
+                            {ai.status === 'production' && '🤖 さくせい完了'}
+                            {ai.status !== 'pending' && ai.status !== 'training'&& ai.status !== 'production' && (ai.status || '✅ かんりょう')}
                         </span>
                     </div>
                 </div>
@@ -72,15 +76,21 @@ export const AiModelCard: React.FC<AiModelCardProps> = ({ ai, onSelect }) => {
                         })}
                         </p>
                     )}
+                    {/* version の表示を追加 */}
+                    {ai.version !== undefined && (
+                        <p className="text-[11px] text-indigo-400 font-black tracking-wider">
+                            バージョン: {ai.version}
+                        </p>
+                    )}
                 </div>
                 <button
                     onClick={(e) => {
-                        e.stopPropagation();
-                        console.log("即時テスト実行:", ai.project_uuid);
+                        e.stopPropagation(); // 親の onClick (モーダル展開) が走らないようにガード
+                        onPlay(ai); // 👈 変更：親から渡されたハンドラーを実行
                     }}
                     className="px-3 py-1.5 bg-white border border-gray-200 shadow-sm rounded-xl text-xs font-black text-gray-600 hover:bg-gray-50 hover:text-indigo-600 transition-all relative z-30"
                 >
-                    テストする
+                    バージョン
                 </button>
             </div>
         </div>
