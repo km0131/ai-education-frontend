@@ -9,12 +9,17 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@litertjs/core": "^2.5.2",
+    "@litertjs/tfjs-interop": "^2.5.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "chart.js": "^4.4.0",
     "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
     "js-cookie": "^3.0.8",
     "jsqr": "^1.4.0",
     "next": "16.1.6",
     "react": "19.2.3",
+    "react-chartjs-2": "^5.2.0",
     "react-dom": "19.2.3"
   },
   "devDependencies": {

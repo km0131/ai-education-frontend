@@ -1,9 +1,7 @@
-// components/room/AiMenuModal.tsx
 'use client';
 
 import React from 'react';
 
-// メインコードで扱っている型と同じもの
 type AiModel = {
     project_uuid: string;
     title?: string;
@@ -24,7 +22,6 @@ interface AiMenuModalProps {
 export const AiMenuModal: React.FC<AiMenuModalProps> = ({ project, onClose, onAction }) => {
     if (!project) return null;
 
-    // メニュー項目のデータ配列化（メンテナンスしやすくするため）
     const menuItems = [
         { type: 'train', icon: '🤖', title: 'AIの学習開始', desc: 'あつめた画像を使って新しく学習しなおすよ', bg: 'hover:bg-indigo-50 border-indigo-100/50 hover:border-indigo-200 text-indigo-900', iconBg: 'bg-indigo-50 group-hover:bg-indigo-100' },
         { type: 'play', icon: '🎮', title: 'AIを試す', desc: 'カメラや画像を使って、このAIの動きを体験してみよう', bg: 'hover:bg-sky-50 border-sky-100/50 hover:border-sky-200 text-sky-900', iconBg: 'bg-sky-50 group-hover:bg-sky-100' },
@@ -50,7 +47,7 @@ export const AiMenuModal: React.FC<AiMenuModalProps> = ({ project, onClose, onAc
                     <button onClick={onClose} className="hover:bg-white/20 p-2 rounded-full transition-all text-xl">✕</button>
                 </div>
 
-                <div className="p-6 space-y-3 bg-gray-50/50 overflow-y-auto max-h-[70vh]">
+                <div className="p-6 pb-12 space-y-3 bg-gray-50/50 overflow-y-auto max-h-[65vh]">
                     {menuItems.map((item) => (
                         <button
                             key={item.type}
