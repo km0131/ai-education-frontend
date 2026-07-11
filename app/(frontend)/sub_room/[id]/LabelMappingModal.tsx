@@ -238,6 +238,7 @@ export default function LabelMappingModal({
             // 時間が無い場合は「テスト開始」表示のまま次の画面へ
             setExecutionTime(null);
             onStartAiTest();
+            onClose();
         } catch (err) {
             console.error(err);
             alert('テスト実行に失敗しました。');

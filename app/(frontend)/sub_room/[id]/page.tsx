@@ -13,6 +13,8 @@ import { CreateAiModal } from './CreateAiModal';
 import { ImageEditModal } from './ImageEditModal';
 import { ManageTestModal } from './UploadingTestImage';
 import LabelMappingModal from './LabelMappingModal';
+import { AiResultModal } from './AiResultModal';
+import { CertificateModal } from './CertificateModal';
 
 // --- 型定義 ---
 interface AiSet {
@@ -75,6 +77,8 @@ export default function SubRoomContent() {
     const [isImageEditModalOpen, setIsImageEditModalOpen] = useState(false);
     const [isTestModalOpen, setIsTestModalOpen] = useState(false);
     const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
+    const [isResultModalOpen, setIsResultModalOpen] = useState(false);
+    const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
     const [selectedProjectUuid, setSelectedProjectUuid] = useState<string>('');
     const [currentCategories, setCurrentCategories] = useState<{ category_index: number; title: string }[]>([]);
 
@@ -352,7 +356,6 @@ export default function SubRoomContent() {
 
     const handleStartAiTestExecution = () => {
         setIsMappingModalOpen(false);
-        router.push(`/ai_test/${selectedProjectUuid}`); // ルーティング先は環境に合わせて調整してください
     };
 
     const getDescription = async (projectUuid: string) => {
@@ -394,8 +397,7 @@ export default function SubRoomContent() {
                     setShowConfirmModal(true);
                     break;
                 case 'play':
-                    console.log("AIを試す (体験画面へ移行):", ai.project_uuid);
-                    // 例: router.push(`/ai/play/${ai.project_uuid}`);
+                    router.push(`/ai/play/${ai.project_uuid}`);
                     break;
                 case 'test':
                     console.log("AIの性能テスト画面へ:", ai.project_uuid);
@@ -431,9 +433,13 @@ export default function SubRoomContent() {
                     break;
                 case 'analytics':
                     console.log("AIの性能を表示:", ai.project_uuid);
+                    setTargetAiModel(ai);
+                    setIsResultModalOpen(true);
                     break;
                 case 'certificate':
                     console.log("終了証書を出力:", ai.project_uuid);
+                    setTargetAiModel(ai);
+                    setIsCertificateModalOpen(true);
                     break;
                 default:
                     console.warn("未知のアクションタイプ:", actionType);
@@ -702,6 +708,32 @@ export default function SubRoomContent() {
                     categories={currentCategories}
                     onStartAiTest={handleStartAiTestExecution}
                     classId={classId}
+                />
+
+                {/* 🆕 AIの性能表示モーダル */}
+                <AiResultModal
+                    isOpen={isResultModalOpen}
+                    onClose={() => {
+                        setIsResultModalOpen(false);
+                        setTargetAiModel(null);
+                    }}
+                    projectUuid={targetAiModel?.project_uuid || ''}
+                    projectTitle={targetAiModel?.title || '無題のAI'}
+                />
+
+                {/* 🆕 終了証書モーダル */}
+                <CertificateModal
+                    isOpen={isCertificateModalOpen}
+                    onClose={() => {
+                        setIsCertificateModalOpen(false);
+                        setTargetAiModel(null);
+                    }}
+                    projectUuid={targetAiModel?.project_uuid || ''}
+                    classId={classId}
+                    studentName={targetAiModel?.student_name || ''}
+                    projectTitle={targetAiModel?.title || '無題のAI'}
+                    courseName={className}
+                    updatedAt={targetAiModel?.updated_at}
                 />
             </div>
         );
