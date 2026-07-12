@@ -379,8 +379,8 @@ export default function MainRoomPage() {
                                                     return;
                                                 }
 
-                                                // 認証が通ったら安全に動的ルートへ遷移
-                                                const url = `/sub_room/${cls.id}`;
+                                                // 認証が通ったら安全に遷移(idはクエリパラメータで渡す)
+                                                const url = `/sub_room?id=${cls.id}`;
                                                 console.log("セキュア遷移成功:", url);
                                                 router.push(url);
 

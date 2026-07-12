@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { API_URL, securedFetch } from '@/src/lib/api';
 import Cookies from 'js-cookie';
@@ -52,7 +52,7 @@ function normalizeModels(data: any): AiModel[] {
 
 export default function SubRoomContent() {
     const router = useRouter();
-    const params = useParams();
+    const searchParams = useSearchParams();
 
     const [className, setClassName] = useState<string>('読み込み中...');
     const [inviteCode, setInviteCode] = useState<string>('');
@@ -95,8 +95,8 @@ export default function SubRoomContent() {
 
     // ルームデータ・ユーザー情報・AIモデルカード一覧を一括取得
     useEffect(() => {
-        if (!params) return;
-        const classId = params.id as string;
+        const classId = searchParams.get('id');
+        if (!classId) return;
 
         const fetchRoomData = async () => {
             setIsLoadingAi(true);
@@ -150,12 +150,12 @@ export default function SubRoomContent() {
         };
 
         fetchRoomData();
-    }, [params, router]);
+    }, [searchParams, router]);
 
-    if (!params) {
+    const classId = searchParams.get('id');
+    if (!classId) {
         return <div className="min-h-screen bg-gray-50 flex items-center justify-center">読み込み中...</div>;
     }
-    const classId = params.id as string;
 
     // オブジェクトURLのメモリ解放ユーティリティ
     const revokeAllPreviews = (sets: AiSet[]) => {
@@ -398,7 +398,7 @@ export default function SubRoomContent() {
                     setShowConfirmModal(true);
                     break;
                 case 'play':
-                    router.push(`/ai/play/${ai.project_uuid}`);
+                    router.push(`/ai/play?id=${ai.project_uuid}`);
                     break;
                 case 'test':
                     console.log("AIの性能テスト画面へ:", ai.project_uuid);
