@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
 import { loadModel, runInference, disposeModel } from './tfModel';
@@ -61,8 +61,8 @@ function decideFinal(results: ModelResultState[]): FinalDecision | null {
 
 export default function AiPlayPage() {
     const router = useRouter();
-    const params = useParams();
-    const projectUuid = (params?.id as string) || '';
+    const searchParams = useSearchParams();
+    const projectUuid = searchParams.get('id') || '';
 
     const [loadingModelInfo, setLoadingModelInfo] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
