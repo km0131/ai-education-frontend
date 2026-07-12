@@ -291,7 +291,7 @@ const HANKO_IMAGE_URL = '/hanko.png';
 const FRAME_IMAGE_URL = '/waku.png';
 
 // 表紙(1枚目)のタイトルと発行元。今は直書きで固定。
-const COVER_TITLE_TEXT = '夏休みのAI×歴史教室の修了書';
+const COVER_TITLE_TEXT = '修了書';
 const COVER_ISSUER_TEXT = '九州情報大学　荒平ゼミ';
 
 
@@ -802,7 +802,7 @@ function CertificateReport({
                             TRAINING PHOTO RECORD
                             <span className="rule" />
                         </div>
-                        <h2>あつめた学習画像一覧（体験の記録）</h2>
+                        <h2>集めた学習画像一覧（体験の記録）</h2>
                         {categories.map((cat) => (
                             <div key={cat.id} className="category-block">
                                 <h3>{cat.title}（{cat.photos.length}枚）</h3>
