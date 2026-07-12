@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '@/src/lib/api';
 
 // バックエンドから届くデータの型定義
-interface CollapsedCategory {
+export interface CollapsedCategory {
     category_index: number;
     title: string;
     explanation: string;
@@ -14,7 +14,7 @@ interface ExplanationModalProps {
     isOpen: boolean;
     onClose: () => void;
     projectUuid: string; // 親から渡されるUUID
-    categories: { category_index: number; title: string }[];
+    categories: CollapsedCategory[];
     onSave: (explanations: { [key: string]: string }, projectUuid: string) => Promise<void>;
     onUpdateLabel: () => Promise<void> | void;
 }
