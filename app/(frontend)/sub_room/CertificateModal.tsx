@@ -741,7 +741,7 @@ function CertificateReport({
                             <span className="date-text">{completionDate}</span>
                             <span className="issuer-text">{COVER_ISSUER_TEXT}</span>
                         </div>
-                        <img src={HANKO_IMAGE_URL} alt="印影" className="hanko-img" />
+                        <img src={HANKO_IMAGE_URL} alt="印影" loading="lazy" className="hanko-img" />
                     </div>
                     <div className="cover-certno">CERT NO. {certificateNo}</div>
                 </section>
@@ -813,7 +813,7 @@ function CertificateReport({
                                 )}
                                 <div className="image-grid">
                                     {cat.photos.slice(0, 16).map((photo) => (
-                                        <img src={photo.url} className="thumb-img" key={photo.id} alt={cat.title} />
+                                        <img src={photo.url} className="thumb-img" key={photo.id} alt={cat.title} loading="lazy" />
                                     ))}
                                     {cat.photos.length > 16 && (
                                         <span className="more-text">ほか {cat.photos.length - 16} 枚</span>

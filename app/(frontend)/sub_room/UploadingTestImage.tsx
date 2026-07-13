@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
+import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 
 // ========================================================
 // 型定義 (Types)
@@ -182,29 +183,22 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
                                             </label>
                                         </div>
 
-                                        {/* 画像グリッド表示エリア */}
-                                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-                                            {photosList.map((photo) => {
-                                                if (!photo || !photo.image_url) return null;
-
-                                                const imageUrl = photo.image_url.startsWith('http')
-                                                    ? photo.image_url
-                                                    : `${API_URL.replace(/\/$/, '')}/${photo.image_url.replace(/^\//, '')}`;
-
-                                                return (
-                                                    <div key={photo.id} className="relative group aspect-square rounded-xl overflow-hidden bg-white border-2 border-gray-100 shadow-sm">
-                                                        <img src={imageUrl} alt={labelName} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDeleteImage(photo.id)}
-                                                            className="absolute top-1 right-1 p-1.5 bg-red-500 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md font-black text-xs leading-none"
-                                                        >
-                                                            ×
-                                                        </button>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                                        {/* 画像グリッド表示エリア(仮想スクロール: grid-cols-3 sm:grid-cols-5 gap-3 相当) */}
+                                        <VirtualizedPhotoGrid
+                                            items={photosList
+                                                .filter((photo) => photo && photo.image_url)
+                                                .map((photo) => ({
+                                                    id: photo.id,
+                                                    url: photo.image_url.startsWith('http')
+                                                        ? photo.image_url
+                                                        : `${API_URL.replace(/\/$/, '')}/${photo.image_url.replace(/^\//, '')}`,
+                                                    alt: labelName,
+                                                }))}
+                                            columns={{ base: 3, sm: 5 }}
+                                            gap={12}
+                                            onDelete={handleDeleteImage}
+                                            emptyMessage="テスト画像が登録されていません。"
+                                        />
                                     </div>
                                 );
                             })}
