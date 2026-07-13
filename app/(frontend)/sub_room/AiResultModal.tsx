@@ -2,8 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import Cookies from 'js-cookie';
+import { FixedSizeList, ListChildComponentProps } from 'react-window';
 import { API_URL } from '@/src/lib/api';
 import { unwrapJson } from '@/src/lib/unwrap-json';
+import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 
 // --- 型定義 ---
 interface EpochPoint {
@@ -360,58 +362,7 @@ export function AiResultModal({ isOpen, onClose, projectUuid, projectTitle }: Ai
                                             </div>
                                         </div>
 
-                                        <div className="overflow-x-auto border border-gray-100 rounded-2xl">
-                                            <table className="w-full text-sm">
-                                                <thead className="bg-gray-50 text-gray-400 text-xs font-bold">
-                                                    <tr>
-                                                        <th className="px-4 py-2 text-left">画像</th>
-                                                        <th className="px-4 py-2 text-left">予測ラベル</th>
-                                                        <th className="px-4 py-2 text-left">正解ラベル</th>
-                                                        <th className="px-4 py-2 text-left">確信度</th>
-                                                        <th className="px-4 py-2 text-left">結果</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {filteredImageEntries.map((entry) => {
-                                                        const imageUrl = entry.image_url
-                                                            ? (entry.image_url.startsWith('http')
-                                                                ? entry.image_url
-                                                                : `${API_URL.replace(/\/$/, '')}/${entry.image_url.replace(/^\//, '')}`)
-                                                            : '';
-                                                        const predictedLabelName = labelNameById[entry.predicted_label_id] || `ID:${entry.predicted_label_id}`;
-
-                                                        return (
-                                                            <tr key={entry.test_image_id} className="border-t border-gray-50">
-                                                                <td className="px-4 py-2">
-                                                                    {imageUrl ? (
-                                                                        <img
-                                                                            src={imageUrl}
-                                                                            alt={predictedLabelName}
-                                                                            className="w-10 h-10 object-cover rounded-lg border border-gray-100"
-                                                                            onError={(e) => {
-                                                                                (e.target as HTMLImageElement).src = 'https://placehold.co/80?text=No+Image';
-                                                                            }}
-                                                                        />
-                                                                    ) : (
-                                                                        <span className="text-gray-300 text-xs">-</span>
-                                                                    )}
-                                                                </td>
-                                                                <td className="px-4 py-2 text-gray-600 font-bold">{predictedLabelName}</td>
-                                                                <td className="px-4 py-2 text-gray-600">{entry.correct_label_name}</td>
-                                                                <td className="px-4 py-2 text-gray-600">{(entry.confidence * 100).toFixed(1)}%</td>
-                                                                <td className="px-4 py-2">
-                                                                    {entry.is_correct ? (
-                                                                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[11px] font-black">✓ 正解</span>
-                                                                    ) : (
-                                                                        <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-500 text-[11px] font-black">✗ 不正解</span>
-                                                                    )}
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                        <VirtualizedResultTable entries={filteredImageEntries} labelNameById={labelNameById} />
                                     </div>
                                 )
                             )}
@@ -463,28 +414,21 @@ export function AiResultModal({ isOpen, onClose, projectUuid, projectTitle }: Ai
                                                                 平均鮮明度 {c.average_sharpness.toFixed(2)}
                                                             </span>
                                                         </div>
-                                                        <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
-                                                            {c.photographs.map((p) => {
-                                                                const url = p.photograph_path.startsWith('http')
+                                                        <VirtualizedPhotoGrid
+                                                            items={c.photographs.map((p) => ({
+                                                                id: p.photograph_path,
+                                                                url: p.photograph_path.startsWith('http')
                                                                     ? p.photograph_path
-                                                                    : `${API_URL.replace(/\/$/, '')}/${p.photograph_path.replace(/^\//, '')}`;
-                                                                return (
-                                                                    <div key={p.photograph_path} className="text-center">
-                                                                        <img
-                                                                            src={url}
-                                                                            alt={c.title}
-                                                                            className="w-full aspect-square object-cover rounded-lg border border-gray-100"
-                                                                            onError={(e) => {
-                                                                                (e.target as HTMLImageElement).src = 'https://placehold.co/80?text=No+Image';
-                                                                            }}
-                                                                        />
-                                                                        <div className="mt-1 text-[11px] font-bold text-gray-500">
-                                                                            {p.sharpness.toFixed(2)}
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
+                                                                    : `${API_URL.replace(/\/$/, '')}/${p.photograph_path.replace(/^\//, '')}`,
+                                                                alt: c.title,
+                                                                caption: p.sharpness.toFixed(2),
+                                                            }))}
+                                                            columns={{ base: 4, sm: 6 }}
+                                                            gap={12}
+                                                            captionHeight={20}
+                                                            fallbackImageUrl="https://placehold.co/80?text=No+Image"
+                                                            emptyMessage="画像がありません"
+                                                        />
                                                     </div>
                                                 ))}
                                             </div>
@@ -561,6 +505,108 @@ function StatBox({ label, value, isCount }: { label: string; value: number; isCo
         <div className="border border-gray-100 rounded-2xl p-3 bg-white shadow-sm text-center">
             <div className="text-[11px] font-bold text-gray-400">{label}</div>
             <div className="text-lg font-black text-gray-700">{isCount ? value : value.toFixed(2)}</div>
+        </div>
+    );
+}
+
+// --- テスト結果一覧(画像タブ)の仮想スクロールテーブル ---
+// react-window は行を position:absolute な div として描画するため、
+// ネイティブの <table>/<tbody> ではなくヘッダー行(固定)+ボディ(仮想化されたflex行)の構成にしている。
+
+const RESULT_ROW_HEIGHT = 56;
+const RESULT_MAX_VISIBLE_ROWS = 8;
+
+interface ResultRowData {
+    entries: TestImageResultEntry[];
+    labelNameById: Record<number, string>;
+}
+
+function ResultTableHeader() {
+    return (
+        <div className="flex items-center gap-4 px-4 py-2 bg-gray-50 text-gray-400 text-xs font-bold border-b border-gray-100">
+            <div className="w-10 flex-shrink-0">画像</div>
+            <div className="flex-1 min-w-0">予測ラベル</div>
+            <div className="flex-1 min-w-0">正解ラベル</div>
+            <div className="w-16 flex-shrink-0">確信度</div>
+            <div className="w-16 flex-shrink-0">結果</div>
+        </div>
+    );
+}
+
+const ResultRow = React.memo(function ResultRow({ index, style, data }: ListChildComponentProps<ResultRowData>) {
+    const { entries, labelNameById } = data;
+    const entry = entries[index];
+    if (!entry) return null;
+
+    const imageUrl = entry.image_url
+        ? (entry.image_url.startsWith('http')
+            ? entry.image_url
+            : `${API_URL.replace(/\/$/, '')}/${entry.image_url.replace(/^\//, '')}`)
+        : '';
+    const predictedLabelName = labelNameById[entry.predicted_label_id] || `ID:${entry.predicted_label_id}`;
+
+    return (
+        <div style={style} className="flex items-center gap-4 px-4 border-t border-gray-50 text-sm">
+            <div className="w-10 flex-shrink-0">
+                {imageUrl ? (
+                    <img
+                        src={imageUrl}
+                        alt={predictedLabelName}
+                        loading="lazy"
+                        className="w-10 h-10 object-cover rounded-lg border border-gray-100"
+                        onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://placehold.co/80?text=No+Image';
+                        }}
+                    />
+                ) : (
+                    <span className="text-gray-300 text-xs">-</span>
+                )}
+            </div>
+            <div className="flex-1 min-w-0 text-gray-600 font-bold truncate">{predictedLabelName}</div>
+            <div className="flex-1 min-w-0 text-gray-600 truncate">{entry.correct_label_name}</div>
+            <div className="w-16 flex-shrink-0 text-gray-600">{(entry.confidence * 100).toFixed(1)}%</div>
+            <div className="w-16 flex-shrink-0">
+                {entry.is_correct ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[11px] font-black">✓ 正解</span>
+                ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-500 text-[11px] font-black">✗ 不正解</span>
+                )}
+            </div>
+        </div>
+    );
+});
+
+function VirtualizedResultTable({
+    entries,
+    labelNameById,
+}: {
+    entries: TestImageResultEntry[];
+    labelNameById: Record<number, string>;
+}) {
+    if (entries.length === 0) {
+        return (
+            <div className="border border-gray-100 rounded-2xl overflow-hidden">
+                <ResultTableHeader />
+                <div className="py-8 text-center text-xs text-gray-400 italic">該当する画像がありません</div>
+            </div>
+        );
+    }
+
+    const itemData: ResultRowData = { entries, labelNameById };
+    const height = Math.min(entries.length, RESULT_MAX_VISIBLE_ROWS) * RESULT_ROW_HEIGHT;
+
+    return (
+        <div className="border border-gray-100 rounded-2xl overflow-hidden">
+            <ResultTableHeader />
+            <FixedSizeList
+                height={height}
+                itemCount={entries.length}
+                itemSize={RESULT_ROW_HEIGHT}
+                width="100%"
+                itemData={itemData}
+            >
+                {ResultRow}
+            </FixedSizeList>
         </div>
     );
 }

@@ -476,7 +476,8 @@ function LoginStep2({ username, imageList, imageNumbers, onBack }: LoginStep2Pro
                       <img
                           src={`${API_URL}/${path}`}
                           alt={`img-pw-${index}`}
-                          className={`w-full aspect-square object-contain p-1 rounded-2xl border-4 transition-all duration-200 
+                          loading="lazy"
+                          className={`w-full aspect-square object-contain p-1 rounded-2xl border-4 transition-all duration-200
                       ${selectedIndices.includes(index)
                               ? "border-sky-400 ring-4 ring-sky-100 scale-105"
                               : "border-slate-200 group-hover:border-sky-300 group-hover:scale-105"

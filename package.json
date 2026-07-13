@@ -20,7 +20,8 @@
     "next": "16.1.6",
     "react": "19.2.3",
     "react-chartjs-2": "^5.2.0",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "react-window": "^1.8.11"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -28,6 +29,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/react-window": "^1.8.8",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",

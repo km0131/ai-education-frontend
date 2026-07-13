@@ -52,9 +52,10 @@ function SignUpStep2({ qrCode, registeredName, createdId, isTeacher }: SignUpSte
           </div>
           <div className="py-6 text-center">
             {qrCode && (
-              <img 
-                src={`data:image/png;base64,${qrCode}`} 
-                alt="QR Code" 
+              <img
+                src={`data:image/png;base64,${qrCode}`}
+                alt="QR Code"
+                loading="lazy"
                 className="mx-auto w-40 h-40 rounded-2xl shadow-md"
               />
             )}
@@ -354,7 +355,8 @@ function SignUpStep1({ onSuccess }: SignUpStep1Props) {
                             <img
                                 src={path}
                                 alt={`img-pw-${index}`}
-                                className={`w-full aspect-square object-contain p-1 rounded-2xl border-4 transition-all duration-200 
+                                loading="lazy"
+                                className={`w-full aspect-square object-contain p-1 rounded-2xl border-4 transition-all duration-200
                                 ${selectedIndices.includes(index)
                                     ? "border-sky-400 ring-4 ring-sky-100 scale-105"
                                     : "border-slate-200 group-hover:border-sky-300 group-hover:scale-105"

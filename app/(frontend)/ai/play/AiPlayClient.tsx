@@ -10,6 +10,7 @@ import { loadModel, runInference, disposeModel } from './tfModel';
 interface LabelDef {
     category_index: number;
     title: string;
+    explanation?: string;
 }
 type ModelUrls = Record<string, string>;
 
@@ -143,6 +144,7 @@ export default function AiPlayPage() {
     //  category_index の値自体は1始まりなど不連続な場合があるので、値の一致では引けない）。
     // バックエンドは category_index 昇順でlabelsをソート済みなので、配列の位置がそのままモデルの出力クラス番号と一致する。
     const labelForIndex = (idx: number) => labels[idx]?.title ?? `ラベル${idx}`;
+    const explanationForIndex = (idx: number) => labels[idx]?.explanation ?? '';
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -299,7 +301,7 @@ export default function AiPlayPage() {
                                     {results.map((r) => (
                                         <div
                                             key={r.modelName}
-                                            className="flex items-center justify-between p-4 bg-gray-50 border border-gray-100 rounded-2xl"
+                                            className="flex items-center justify-between gap-3 p-4 bg-gray-50 border border-gray-100 rounded-2xl"
                                         >
                                             <span className="text-sm font-black text-gray-700">{r.modelName}</span>
                                             {r.status === 'pending' && (
@@ -309,10 +311,12 @@ export default function AiPlayPage() {
                                                 <span className="text-xs font-bold text-indigo-500 animate-pulse">かんがえちゅう...</span>
                                             )}
                                             {r.status === 'done' && (
-                                                <span className="text-sm font-black text-emerald-600">
-                                                    {labelForIndex(r.categoryIndex as number)}
-                                                    <span className="text-xs text-emerald-400 ml-1">
-                                                        ({Math.round((r.confidence ?? 0) * 100)}%)
+                                                <span className="flex items-center gap-2">
+                                                    <span className="text-sm font-black text-emerald-700">
+                                                        {labelForIndex(r.categoryIndex as number)}
+                                                    </span>
+                                                    <span className="px-2 py-0.5 text-xs font-bold text-emerald-600 bg-emerald-100 rounded-full">
+                                                        {Math.round((r.confidence ?? 0) * 100)}%
                                                     </span>
                                                 </span>
                                             )}
@@ -329,11 +333,28 @@ export default function AiPlayPage() {
 
                         {/* 最終結果（多数決） */}
                         {phase === 'result' && finalDecision && (
-                            <div className="bg-gradient-to-br from-indigo-600 to-purple-600 rounded-3xl shadow-lg p-8 text-center text-white space-y-2">
-                                <p className="text-xs font-bold text-indigo-100 uppercase tracking-wider">
-                                    {finalDecision.reason === 'majority' ? '👍 AIの結果' : '🎯 一番自信があったAIの意見'}
-                                </p>
-                                <p className="text-3xl font-black">{labelForIndex(finalDecision.categoryIndex)}</p>
+                            <div className="bg-white rounded-2xl p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+                                <div className="flex items-center gap-2 mb-4">
+                                    <span className="flex items-center justify-center w-[22px] h-[22px] rounded-full bg-white border border-[#eceef1] text-[#1f2430] text-xs font-bold flex-shrink-0">
+                                        ③
+                                    </span>
+                                    <span className="text-[15px] font-bold text-[#1f2430]">
+                                        {finalDecision.reason === 'majority' ? 'AIの結果' : '一番自信があったAIの意見'}
+                                    </span>
+                                </div>
+                                <div className="text-[34px] font-extrabold text-[#1f2430] mb-3.5">
+                                    {labelForIndex(finalDecision.categoryIndex)}
+                                </div>
+                                {explanationForIndex(finalDecision.categoryIndex) && (
+                                    <div className="bg-[#f6f7f9] border border-[#eceef1] rounded-xl px-4 py-3.5">
+                                        <div className="text-[11px] font-bold text-[#8a90a0] tracking-[0.04em] mb-1">
+                                            せつめい
+                                        </div>
+                                        <div className="text-[19px] text-[#333844] leading-[1.6]">
+                                            {explanationForIndex(finalDecision.categoryIndex)}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 

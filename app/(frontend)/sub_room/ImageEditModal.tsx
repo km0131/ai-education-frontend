@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '@/src/lib/api';
+import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 
 // バックエンドのデータ構造に合わせた型定義
 interface PhotoInfo {
@@ -208,44 +209,23 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
                                         </label>
                                     </div>
 
-                                    {/* 画像グリッド */}
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4">
-                                        {photosList.length > 0 ? (
-                                            photosList.map((photo) => {
-                                                if (!photo || !photo.path) return null;
-
-                                                // URL結合時のスラッシュ重複を徹底防止
-                                                const imageUrl = photo.path.startsWith('http')
+                                    {/* 画像グリッド(仮想スクロール: grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-4 相当) */}
+                                    <VirtualizedPhotoGrid
+                                        items={photosList
+                                            .filter((photo) => photo && photo.path)
+                                            .map((photo) => ({
+                                                id: photo.id,
+                                                url: photo.path.startsWith('http')
                                                     ? photo.path
-                                                    : `${API_URL.replace(/\/$/, '')}/${photo.path.replace(/^\//, '')}`;
-
-                                                return (
-                                                    <div key={photo.id} className="relative group aspect-square rounded-lg overflow-hidden bg-gray-50 border border-gray-100 shadow-sm">
-                                                        <img
-                                                            src={imageUrl}
-                                                            alt={displayTitle}
-                                                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                                                            onError={(e) => {
-                                                                // 読み込めない場合のフォールバック画像
-                                                                (e.target as HTMLImageElement).src = 'https://placehold.co/150?text=No+Image';
-                                                            }}
-                                                        />
-                                                        <button
-                                                            onClick={() => handleDeleteImage(photo.id)}
-                                                            className="absolute top-1.5 right-1.5 p-1.5 bg-red-500/90 hover:bg-red-600 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md"
-                                                            title="画像を削除"
-                                                        >
-                                                            ×
-                                                        </button>
-                                                    </div>
-                                                );
-                                            })
-                                        ) : (
-                                            <div className="col-span-full py-8 text-center text-xs text-gray-400 italic">
-                                                画像が登録されていません。
-                                            </div>
-                                        )}
-                                    </div>
+                                                    : `${API_URL.replace(/\/$/, '')}/${photo.path.replace(/^\//, '')}`,
+                                                alt: displayTitle,
+                                            }))}
+                                        columns={{ base: 2, sm: 4, md: 5 }}
+                                        gap={16}
+                                        onDelete={handleDeleteImage}
+                                        fallbackImageUrl="https://placehold.co/150?text=No+Image"
+                                        emptyMessage="画像が登録されていません。"
+                                    />
 
                                 </div>
                             );
