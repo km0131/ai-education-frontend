@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"/home/kaito/ai-education-set/ai-education-backend\" && grep -rn \"UpTestStatus\" internal/db/*.go)",
+      "Bash(gh auth *)",
+      "Bash(env)"
+    ]
+  }
+}

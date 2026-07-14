@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
+import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
+import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 // ========================================================
 // 型定義 (Types)
@@ -221,6 +223,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
     ]);
     const [labels, setLabels] = useState<string[]>([]);
     const [labelsLoading, setLabelsLoading] = useState(false);
+    const [statusModal, setStatusModal] = useState<UploadStatus>(null);
 
     useEffect(() => {
         if (mode === 'edit_labels' && classId) {
@@ -313,7 +316,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
 
         const isValid = uploadSets.every(set => set.correctLabelName && set.images.length > 0);
         if (!isValid) {
-            alert('すべてのテスト分類に名前とテスト画像を1枚以上入れてください');
+            setStatusModal({ type: 'error', message: 'すべてのテスト分類に名前とテスト画像を1枚以上入れてください' });
             return;
         }
 
@@ -321,7 +324,12 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
         const uploadBatchId = crypto.randomUUID();
         try {
             const savedToken = Cookies.get('auth_token');
-            const uploadPromises: Promise<Response>[] = [];
+
+            const totalCount = uploadSets.reduce((sum, set) => sum + set.images.length, 0);
+            let completedCount = 0;
+            setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(0/${totalCount}枚)` });
+
+            const uploadPromises: Promise<void>[] = [];
 
             for (const set of uploadSets) {
                 for (const file of set.images) {
@@ -331,24 +339,26 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                     formData.append('file', file);
                     formData.append('batch_id', uploadBatchId);
 
-                    const p = fetch(`${API_URL}/api/v1/test/uploading_test_image`, {
-                        method: 'POST',
-                        headers: {'Authorization': `Bearer ${savedToken}`},
-                        body: formData,
-                    }).then(async (res) => {
-                        if (!res.ok) throw new Error(`${set.correctLabelName} の送信に失敗`);
-                        return res;
-                    });
-                    uploadPromises.push(p);
+                    uploadPromises.push(
+                        uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken)
+                            .then(() => {
+                                completedCount += 1;
+                                setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(${completedCount}/${totalCount}枚)` });
+                            })
+                            .catch((err) => {
+                                throw new Error(err instanceof Error ? `${set.correctLabelName}: ${err.message}` : `${set.correctLabelName} の送信に失敗`);
+                            })
+                    );
                 }
             }
 
             await Promise.all(uploadPromises);
-            alert('テストデータの登録が完了しました！');
-            handleClose();
+            setStatusModal({ type: 'success', message: 'テストデータの登録が完了しました！' });
+            revokeAllPreviews(uploadSets);
+            setUploadSets([{correctLabelName: '', images: [], previewUrls: []}]);
             onSuccess();
         } catch (error: any) {
-            alert(`エラーが発生しました: ${error.message || '送信失敗'}`);
+            setStatusModal({ type: 'error', message: error.message || '送信に失敗しました' });
         } finally {
             setIsSubmitting(false);
         }
@@ -384,6 +394,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
     };
 
     return (
+        <>
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose}></div>
 
@@ -474,7 +485,8 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                             テスト分類を追加
                         </button>
                         <button type="submit" disabled={isSubmitting}
-                                className="w-full py-5 bg-amber-600 text-white rounded-2xl font-black shadow-lg shadow-amber-100 hover:bg-amber-700 transition-all">保存する
+                                className="w-full py-5 bg-amber-600 text-white rounded-2xl font-black shadow-lg shadow-amber-100 hover:bg-amber-700 disabled:bg-amber-300 transition-all">
+                            {isSubmitting ? 'テストデータを送信中...' : '保存する'}
                         </button>
                     </form>
                 )}
@@ -570,5 +582,13 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                 )}
             </div>
         </div>
+
+        {/* 送信結果モーダル(成功/失敗) */}
+        <UploadStatusModal
+            status={statusModal}
+            onClose={() => setStatusModal(null)}
+            onSuccessConfirm={handleClose}
+        />
+        </>
     );
 }
