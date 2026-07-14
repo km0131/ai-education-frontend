@@ -17,7 +17,7 @@ services:
       - NODE_ENV=development
       - PORT=3000
       # Hono等からバックエンドコンテナを呼ぶ場合は、コンテナ名「backend」で通信可能
-      - BACKEND_API_URL=http://backend:8080
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
       - WATCHPACK_POLLING=true
     volumes:
       - .:/app:Z
