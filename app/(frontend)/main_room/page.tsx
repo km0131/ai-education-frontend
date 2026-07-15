@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { API_URL, securedFetch } from '@/src/lib/api';
+import { securedFetch } from '@/src/lib/api';
 import Cookies from 'js-cookie';
 
 export interface ClassRoom {
@@ -71,39 +71,40 @@ export default function MainRoomPage() {
         fetchUserInfo();
     }, [token, router]);
 
+    // クラス一覧取得（登録済みクラスをAPIから取得してstateに反映）
+    const fetchClasses = async () => {
+        try {
+            const res = await securedFetch('/api/v1/my_courses');
+            if (!res.ok) throw new Error('クラス一覧の取得に失敗しました');
+            const data = await res.json();
+
+            if (data.status === 'success') {
+                const rawCourses = data.courses || [];
+                const rawStudentCourses = data.studentcourses || [];
+                const combined = [...rawCourses, ...rawStudentCourses];
+
+                // 🌟 APIから返ってきた本物のデータを正しくマッピングする
+                const mappedCourses: ClassRoom[] = combined.map((cls: any) => ({
+                    id: String(cls.id),
+                    title: cls.title || '無題のクラス',
+                    description: cls.description || '',
+                    teacher_name: cls.teacher_name || '担当の先生',
+                    student_count: cls.student_count || 0,
+                    invite_code: cls.invite_code || '',
+                    theme_color: cls.theme_color || 'blue',
+                    updata_time: cls.updata_time || '',
+                }));
+
+                setClasses(mappedCourses);
+            }
+        } catch (error) {
+            console.error('Failed to fetch classes:', error);
+        }
+    };
+
     // 2. クラス一覧取得
     useEffect(() => {
         if (!token) return;
-
-        const fetchClasses = async () => {
-            try {
-                const res = await securedFetch('/api/v1/my_courses');
-                if (!res.ok) throw new Error('クラス一覧の取得に失敗しました');
-                const data = await res.json();
-
-                if (data.status === 'success') {
-                    const rawCourses = data.courses || [];
-                    const rawStudentCourses = data.studentcourses || [];
-                    const combined = [...rawCourses, ...rawStudentCourses];
-
-                    // 🌟 APIから返ってきた本物のデータを正しくマッピングする
-                    const mappedCourses: ClassRoom[] = combined.map((cls: any) => ({
-                        id: String(cls.id),
-                        title: cls.title || '無題のクラス',
-                        description: cls.description || '',
-                        teacher_name: cls.teacher_name || '担当の先生',
-                        student_count: cls.student_count || 0,
-                        invite_code: cls.invite_code || '',
-                        theme_color: cls.theme_color || 'blue',
-                        updata_time: cls.updata_time || '',
-                    }));
-
-                    setClasses(mappedCourses);
-                }
-            } catch (error) {
-                console.error('Failed to fetch classes:', error);
-            }
-        };
         fetchClasses();
     }, [token]);
 
@@ -113,7 +114,7 @@ export default function MainRoomPage() {
         if (!token) return;
 
         try {
-            const res = await fetch(`${API_URL}/api/v1/create_class`, {
+            const res = await securedFetch('/api/v1/create_class', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -132,19 +133,8 @@ export default function MainRoomPage() {
                 setCreatedClassCode(data.class_code || '---');
                 setShowSuccessModal(true);
 
-                // 🌟 小文字プロパティ＆本物のデータに合わせた即時反映
-                const newCourse: ClassRoom = {
-                    id: data.id ? String(data.id) : String(Date.now()),
-                    title: newClassName,
-                    description: newClassDesc,
-                    teacher_name: userName ? userName.split('-')[0] : '担当の先生',
-                    student_count: 0,
-                    invite_code: data.class_code || '------',
-                    theme_color: 'green',
-                    updata_time: new Date().toISOString(),
-                };
-
-                setClasses((prev) => [newCourse, ...prev]);
+                // 🌟 擬似カードを作らず、登録済みクラス一覧をAPIから取得し直して反映する
+                await fetchClasses();
 
                 setNewClassName('');
                 setNewClassDesc('');
@@ -178,19 +168,8 @@ export default function MainRoomPage() {
 
             const data = await res.json();
 
-            // 🌟 クラス参加時もフロント側で擬似カードを即時反映（リロード不要にする）
-            const newJoinedCourse: ClassRoom = {
-                id: data.course?.id ? String(data.course.id) : String(Date.now()),
-                title: data.course?.title || `参加したクラス (${joinCode})`,
-                description: data.course?.description || 'クラスに参加しました。授業内容を確認しましょう！',
-                teacher_name: data.course?.teacher_name || '担当の先生',
-                student_count: data.course?.student_count || 1,
-                invite_code: joinCode,
-                theme_color: 'blue',
-                updata_time: new Date().toISOString(),
-            };
-
-            setClasses((prev) => [...prev, newJoinedCourse]);
+            // 🌟 擬似カードを作らず、登録済みクラス一覧をAPIから取得し直して反映する
+            await fetchClasses();
 
             setJoinSuccessMessage(data.message || 'クラスに参加しました！');
             setShowJoinSuccessModal(true);
