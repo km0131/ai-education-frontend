@@ -89,19 +89,14 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
 
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
+      const objectUrl = URL.createObjectURL(file);
 
       try {
-        const imageUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (evt) => resolve(evt.target?.result as string);
-          reader.onerror = (err) => reject(err);
-          reader.readAsDataURL(file);
-        });
-
         const image = new Image();
-        image.src = imageUrl;
-        await new Promise((resolve) => {
+        image.src = objectUrl;
+        await new Promise((resolve, reject) => {
           image.onload = resolve;
+          image.onerror = reject;
         });
 
         const canvas = document.createElement("canvas");
@@ -125,6 +120,8 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
       } catch (err) {
         console.error("QR Scan Error:", err);
         setError("画像の読み込みに失敗しました。別の写真を試してください。");
+      } finally {
+        URL.revokeObjectURL(objectUrl);
       }
     }
   };

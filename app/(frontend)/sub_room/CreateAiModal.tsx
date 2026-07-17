@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
+import { prefetchUploadImageFiles } from '@/src/lib/imageResize';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 interface CreateAiModalProps {
@@ -27,14 +28,21 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
     ]);
     const [statusModal, setStatusModal] = useState<UploadStatus>(null);
 
-    if (!isOpen) return null;
-
     // オブジェクトURLのメモリ解放ユーティリティ
     const revokeAllPreviews = (sets: AiSet[]) => {
         sets.forEach(set => {
             set.previewUrls.forEach(url => URL.revokeObjectURL(url));
         });
     };
+
+    // アンマウント時にも、その時点で残っているプレビューを必ず解放する(リーク防止の最終防衛線)
+    const aiSetsRef = useRef(aiSets);
+    aiSetsRef.current = aiSets;
+    useEffect(() => {
+        return () => revokeAllPreviews(aiSetsRef.current);
+    }, []);
+
+    if (!isOpen) return null;
 
     // モーダルを閉じる際の状態クリーンアップ
     const handleClose = () => {
@@ -105,42 +113,39 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
             const savedToken = Cookies.get('auth_token');
             const uploadSessionId = crypto.randomUUID();
 
-            const totalCount = aiSets.reduce((sum, set) => sum + set.images.length, 0);
+            // カテゴリ横断でフラットな一覧にし、元の並び順を保ったままリサイズを先行投入する
+            // (Workerプールの並列度で処理されるため、アップロード中も次画像のリサイズが進む)
+            const flatItems = aiSets.flatMap((set, setIdx) =>
+                set.images.map((file) => ({ file, categoryId: setIdx + 1, categoryName: set.name }))
+            );
+            const totalCount = flatItems.length;
             let completedCount = 0;
             setStatusModal({ type: 'loading', message: `画像を送信しています…(0/${totalCount}枚)` });
 
-            const uploadPromises: Promise<void>[] = [];
+            const resizedFilePromises = prefetchUploadImageFiles(flatItems.map((item) => item.file));
 
-            for (let setIdx = 0; setIdx < aiSets.length; setIdx++) {
-                const set = aiSets[setIdx];
-                const categoryId = (setIdx + 1);
-
-                for (let imgIdx = 0; imgIdx < set.images.length; imgIdx++) {
-                    const file = set.images[imgIdx];
+            // アップロードは後続処理の都合上1枚ずつ順番に送信する(並行実行はしない)
+            for (let i = 0; i < flatItems.length; i++) {
+                const { categoryId, categoryName } = flatItems[i];
+                try {
+                    const { original, resized } = await resizedFilePromises[i];
 
                     const formData = new FormData();
                     formData.append('course_id', classId);
                     formData.append('category_id', categoryId.toString());
-                    formData.append('category_title', set.name);
+                    formData.append('category_title', categoryName);
                     formData.append('title', aiProjectTitle);
                     formData.append('upload_session_id', uploadSessionId);
-                    formData.append('file', file);
+                    formData.append('file', original);
+                    if (resized) formData.append('resized_file', resized);
 
-                    uploadPromises.push(
-                        uploadImageWithRetry(`${API_URL}/api/v1/ai/upload_image`, formData, savedToken)
-                            .then(() => {
-                                completedCount += 1;
-                                setStatusModal({ type: 'loading', message: `画像を送信しています…(${completedCount}/${totalCount}枚)` });
-                            })
-                            .catch((err) => {
-                                throw new Error(err instanceof Error ? `${set.name}: ${err.message}` : `${set.name} の画像送信に失敗しました`);
-                            })
-                    );
+                    await uploadImageWithRetry(`${API_URL}/api/v1/ai/upload_image`, formData, savedToken);
+                    completedCount += 1;
+                    setStatusModal({ type: 'loading', message: `画像を送信しています…(${completedCount}/${totalCount}枚)` });
+                } catch (err) {
+                    throw new Error(err instanceof Error ? `${categoryName}: ${err.message}` : `${categoryName} の画像送信に失敗しました`);
                 }
             }
-
-            // すべてのアップロードを並行して実行
-            await Promise.all(uploadPromises);
 
             setStatusModal({ type: 'success', message: 'すべての画像データの送信が完了しました！' });
             revokeAllPreviews(aiSets);

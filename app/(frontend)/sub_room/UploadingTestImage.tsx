@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
+import { buildUploadImageFiles, prefetchUploadImageFiles } from '@/src/lib/imageResize';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 // ========================================================
@@ -111,11 +112,13 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
         if (!file) return;
 
         const savedToken = Cookies.get('auth_token');
+        const { original, resized } = await buildUploadImageFiles(file);
         const formData = new FormData();
         formData.append('course_id', classId);
         formData.append('correct_label_name', correctLabelName);
         formData.append('batch_id', currentBatchId);
-        formData.append('file', file);
+        formData.append('file', original);
+        if (resized) formData.append('resized_file', resized);
 
         try {
             const res = await fetch(`${API_URL}/api/v1/test/uploading_test_image`, {
@@ -260,11 +263,18 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
         }
     };
 
-    if (!isOpen) return null;
-
     const revokeAllPreviews = (sets: TestUploadSet[]) => {
         sets.forEach(set => set.previewUrls.forEach(url => URL.revokeObjectURL(url)));
     };
+
+    // アンマウント時にも、その時点で残っているプレビューを必ず解放する(リーク防止の最終防衛線)
+    const uploadSetsRef = useRef(uploadSets);
+    uploadSetsRef.current = uploadSets;
+    useEffect(() => {
+        return () => revokeAllPreviews(uploadSetsRef.current);
+    }, []);
+
+    if (!isOpen) return null;
 
     const handleClose = () => {
         revokeAllPreviews(uploadSets);
@@ -325,34 +335,37 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
         try {
             const savedToken = Cookies.get('auth_token');
 
-            const totalCount = uploadSets.reduce((sum, set) => sum + set.images.length, 0);
+            // ラベル横断でフラットな一覧にし、元の並び順を保ったままリサイズを先行投入する
+            // (Workerプールの並列度で処理されるため、アップロード中も次画像のリサイズが進む)
+            const flatItems = uploadSets.flatMap((set) =>
+                set.images.map((file) => ({ file, correctLabelName: set.correctLabelName }))
+            );
+            const totalCount = flatItems.length;
             let completedCount = 0;
             setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(0/${totalCount}枚)` });
 
-            const uploadPromises: Promise<void>[] = [];
+            const resizedFilePromises = prefetchUploadImageFiles(flatItems.map((item) => item.file));
 
-            for (const set of uploadSets) {
-                for (const file of set.images) {
+            // アップロードは後続処理の都合上1枚ずつ順番に送信する(並行実行はしない)
+            for (let i = 0; i < flatItems.length; i++) {
+                const { correctLabelName } = flatItems[i];
+                try {
+                    const { original, resized } = await resizedFilePromises[i];
+
                     const formData = new FormData();
                     formData.append('course_id', classId);
-                    formData.append('correct_label_name', set.correctLabelName);
-                    formData.append('file', file);
+                    formData.append('correct_label_name', correctLabelName);
+                    formData.append('file', original);
+                    if (resized) formData.append('resized_file', resized);
                     formData.append('batch_id', uploadBatchId);
 
-                    uploadPromises.push(
-                        uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken)
-                            .then(() => {
-                                completedCount += 1;
-                                setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(${completedCount}/${totalCount}枚)` });
-                            })
-                            .catch((err) => {
-                                throw new Error(err instanceof Error ? `${set.correctLabelName}: ${err.message}` : `${set.correctLabelName} の送信に失敗`);
-                            })
-                    );
+                    await uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken);
+                    completedCount += 1;
+                    setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(${completedCount}/${totalCount}枚)` });
+                } catch (err) {
+                    throw new Error(err instanceof Error ? `${correctLabelName}: ${err.message}` : `${correctLabelName} の送信に失敗`);
                 }
             }
-
-            await Promise.all(uploadPromises);
             setStatusModal({ type: 'success', message: 'テストデータの登録が完了しました！' });
             revokeAllPreviews(uploadSets);
             setUploadSets([{correctLabelName: '', images: [], previewUrls: []}]);
