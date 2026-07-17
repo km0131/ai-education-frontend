@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '@/src/lib/api';
+import { buildUploadImageFiles } from '@/src/lib/imageResize';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 
 // バックエンドのデータ構造に合わせた型定義
@@ -88,6 +89,8 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
             .find(row => row.startsWith('auth_token='))
             ?.split('=')[1];
 
+        const { original, resized } = await buildUploadImageFiles(file);
+
         const formData = new FormData();
         // 🚀 Goの ImageUploadRequest 構造体に完全適合
         formData.append('course_id', classId);               // クラスID（数値の文字列）
@@ -95,7 +98,8 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
         formData.append('category_title', categoryTitle);     // ラベル名（「ご本殿」や「牛」）
         formData.append('title', projectTitle);              // 🔥【修正】現在のAIカードのタイトル
         formData.append('upload_session_id', configId);      // プロジェクトのUUID文字列
-        formData.append('file', file);
+        formData.append('file', original);
+        if (resized) formData.append('resized_file', resized);
 
         try {
             const res = await fetch(`${API_URL}/api/v1/ai/image_updated`, {
