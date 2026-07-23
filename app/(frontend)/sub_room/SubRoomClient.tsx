@@ -29,6 +29,7 @@ type AiModel = {
     title?: string;
     student_name?: string;
     status?: string;
+    test_status?: string;
     updated_at?: string;
     image_count?: number;
     theme_color?: string;
@@ -542,15 +543,7 @@ export default function SubRoomContent() {
                                 <Link href="/main_room"
                                       className="block p-4 hover:bg-indigo-50 rounded-2xl font-bold">ホーム
                                 </Link>
-                                <Link href="https://drive.google.com/drive/u/0/folders/0ABxZFbrlBtkXUk9PVA"
-                                      className="block p-4 hover:bg-indigo-50 rounded-2xl font-bold">テスト用画像
-                                </Link>
-                                <Link href="https://docs.google.com/forms/d/e/1FAIpQLSc16qwI6_HfmrOl240xJleSc06KMa0F4cHcyQakwynV7a4UfQ/viewform?usp=header"
-                                      className="block p-4 hover:bg-indigo-50 rounded-2xl font-bold">バグの報告
-                                </Link>
-                                <Link href="https://docs.google.com/forms/d/e/1FAIpQLSefT9fi--o7DyE7VkI_n6IJofbdy9yht3rCdCNsPn0mO0gKgQ/viewform?usp=header"
-                                      className="block p-4 hover:bg-indigo-50 rounded-2xl font-bold">アンケート
-                                </Link>
+
                                 <button onClick={() => {
                                     router.push('/');
                                 }}
