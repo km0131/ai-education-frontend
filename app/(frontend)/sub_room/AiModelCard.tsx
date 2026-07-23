@@ -7,6 +7,7 @@ type AiModel = {
     title?: string;
     student_name?: string;
     status?: string;
+    test_status?: string;
     updated_at?: string;
     image_count?: number;
     theme_color?: string;
@@ -51,7 +52,7 @@ export const AiModelCard: React.FC<AiModelCardProps> = ({ ai, onSelect, onPlay }
             <div className="p-5 pt-8 flex-1 flex flex-col justify-between">
                 <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-gray-400 font-bold">ステータス:</span>
+                        <span className="text-[11px] text-gray-400 font-bold">作成ステータス:</span>
                         <span className={`text-xs px-2.5 py-0.5 rounded-full font-black ${
                             isPending
                                 ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse'
@@ -61,6 +62,23 @@ export const AiModelCard: React.FC<AiModelCardProps> = ({ ai, onSelect, onPlay }
                             {ai.status === 'training' && '🔥 がくしゅうちゅう'}
                             {ai.status === 'production' && '🤖 さくせい完了'}
                             {ai.status !== 'pending' && ai.status !== 'training'&& ai.status !== 'production' && (ai.status || '✅ かんりょう')}
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-gray-400 font-bold">テストステータス:</span>
+                        <span className={`text-xs px-2.5 py-0.5 rounded-full font-black ${
+                            ai.test_status === 'running'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200 animate-pulse'
+                                : ai.test_status === 'success'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : ai.test_status === 'failed'
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                            {ai.test_status === 'running' && '🧪 テスト中'}
+                            {ai.test_status === 'success' && '✅ 完了'}
+                            {ai.test_status === 'failed' && '⚠️ エラー'}
+                            {(!ai.test_status || ai.test_status === 'pending') && '⏳ 準備中'}
                         </span>
                     </div>
                 </div>

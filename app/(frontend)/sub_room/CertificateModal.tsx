@@ -507,7 +507,7 @@ function CertificateReport({
           position: relative;
           height: 100%;
           box-sizing: border-box;
-          padding: 46mm 26mm 26mm;
+          padding: 30mm 14mm 26mm;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -517,23 +517,24 @@ function CertificateReport({
         .cover-title {
           font-family: 'Fraunces', serif;
           font-weight: 700;
-          font-size: 30px;
+          font-size: 32px;
           line-height: 1.4;
           letter-spacing: 0.03em;
           color: var(--navy-deep);
         }
         .cover-name {
           font-family: 'Fraunces', serif;
-          font-weight: 600;
-          font-size: 23px;
+          font-weight: 700;
+          font-size: 52px;
+          line-height: 1.3;
           color: var(--navy-deep);
-          margin-top: 14px;
+          margin-top: 20px;
         }
         .cover-desc {
-          margin-top: 16px;
-          max-width: 480px;
-          font-size: 17.5px;
-          line-height: 1.95;
+          margin-top: 22px;
+          max-width: 700px;
+          font-size: 20px;
+          line-height: 2;
           letter-spacing: 0.01em;
           color: var(--ink);
         }
@@ -550,13 +551,13 @@ function CertificateReport({
           display: block;
           font-family: 'Fraunces', serif;
           font-weight: 700;
-          font-size: 24px;
+          font-size: 27px;
           color: var(--navy-deep);
         }
         .cover-bottomright .issuer-text {
           display: block;
           font-family: 'JetBrains Mono', monospace;
-          font-size: 14px;
+          font-size: 15px;
           letter-spacing: 0.02em;
           color: var(--ink-soft);
           margin-top: 4px;
@@ -802,7 +803,7 @@ function CertificateReport({
                             TRAINING PHOTO RECORD
                             <span className="rule" />
                         </div>
-                        <h2>集めた学習画像一覧（体験の記録）</h2>
+                        <h2>集めた学習画の一部（体験の記録）</h2>
                         {categories.map((cat) => (
                             <div key={cat.id} className="category-block">
                                 <h3>{cat.title}（{cat.photos.length}枚）</h3>
