@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '@/src/lib/api';
 import { buildUploadImageFiles } from '@/src/lib/imageResize';
+import { processSelectedFiles } from '@/src/lib/heicConvert';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 
 // バックエンドのデータ構造に合わせた型定義
@@ -81,8 +82,17 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
         categoryTitle: string, // 「ご本殿」や「牛」
         e: React.ChangeEvent<HTMLInputElement>
     ) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const rawFile = e.target.files?.[0];
+        e.target.value = '';
+        if (!rawFile) return;
+
+        const { files, failures } = await processSelectedFiles([rawFile]);
+        if (failures.length > 0) {
+            alert(`画像の変換に失敗しました: ${failures[0].name}(${failures[0].reason})`);
+            return;
+        }
+        if (files.length === 0) return;
+        const file = files[0];
 
         const savedToken = document.cookie
             .split('; ')
@@ -112,12 +122,11 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
                 fetchImages();
             } else {
                 const errorData = await res.json().catch(() => ({}));
-                alert(`画像の追加に失敗しました: ${errorData.error || 'サーバーエラー'}`);
+                const prefix = errorData.filename ? `${errorData.filename}: ` : '';
+                alert(`画像の追加に失敗しました: ${prefix}${errorData.error || 'サーバーエラー'}`);
             }
         } catch (err) {
             alert('通信エラーが発生しました');
-        } finally {
-            e.target.value = '';
         }
     };
 
@@ -205,7 +214,7 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
                                             <span>📷 画像を追加</span>
                                             <input
                                                 type="file"
-                                                accept="image/*"
+                                                accept="image/*,.heic,.heif,.cr2,.cr3"
                                                 className="hidden"
                                                 /* 🚀 本物の category_index を含む backendCategoryId を渡す */
                                                 onChange={(e) => handleAddImage(backendCategoryId, displayTitle, e)}

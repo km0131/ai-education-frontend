@@ -31,7 +31,10 @@ export async function uploadImageWithRetry(url: string, formData: FormData, toke
 
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || `画像の送信に失敗しました(${res.status})`);
+                const message = errorData.error || `画像の送信に失敗しました(${res.status})`;
+                // バックエンドがfilenameを返す場合(HEIC/RAWのフォールバック変換失敗など)は、
+                // どのファイルが失敗したか分かるようメッセージに含める。
+                throw new Error(errorData.filename ? `${errorData.filename}: ${message}` : message);
             }
             return;
         } catch (err) {
