@@ -5,7 +5,7 @@ import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
 import { prefetchUploadImageFiles } from '@/src/lib/imageResize';
-import { processSelectedFiles, isRawFile, HeicConversionFailure } from '@/src/lib/heicConvert';
+import { processSelectedFiles, isRawFile, isHeicFile, HeicConversionFailure } from '@/src/lib/heicConvert';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 interface CreateAiModalProps {
@@ -207,7 +207,7 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
                                 <div className="grid grid-cols-3 gap-3">
                                     {set.previewUrls.map((url, i) => (
                                         <div key={i} className="relative aspect-square group">
-                                            {isRawFile(set.images[i]) ? (
+                                            {isRawFile(set.images[i]) || isHeicFile(set.images[i]) ? (
                                                 <div className="w-full h-full flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-white shadow-md bg-indigo-50 text-indigo-400 p-1">
                                                     <span className="text-xl">📷</span>
                                                     <span className="text-[10px] font-bold text-center break-all line-clamp-2">{set.images[i].name}</span>
@@ -226,7 +226,7 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
 
                                 {set.failedFiles.length > 0 && (
                                     <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-2xl p-3 space-y-1">
-                                        <p className="font-black">変換に失敗したファイル:</p>
+                                        <p className="font-black">ブラウザでの変換に失敗したファイル(送信時にサーバー側で変換を試みます):</p>
                                         <ul className="space-y-0.5">
                                             {set.failedFiles.map((f, fi) => (
                                                 <li key={fi} className="flex items-center justify-between gap-2">

@@ -6,7 +6,7 @@ import { API_URL } from '@/src/lib/api';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
 import { buildUploadImageFiles, prefetchUploadImageFiles } from '@/src/lib/imageResize';
-import { processSelectedFiles, isRawFile, HeicConversionFailure } from '@/src/lib/heicConvert';
+import { processSelectedFiles, isRawFile, isHeicFile, HeicConversionFailure } from '@/src/lib/heicConvert';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 // ========================================================
@@ -115,11 +115,11 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
         if (!rawFile) return;
 
         const { files, failures } = await processSelectedFiles([rawFile]);
+        if (files.length === 0) return; // .AAE/.MOV等の除外対象のみ送信をやめる
         if (failures.length > 0) {
-            alert(`画像の変換に失敗しました: ${failures[0].name}(${failures[0].reason})`);
-            return;
+            // ブラウザでの変換には失敗したが、元ファイルのまま送信してバックエンドのフォールバックに委ねる
+            console.warn(`HEIC変換に失敗したため元ファイルのまま送信します: ${failures[0].name}(${failures[0].reason})`);
         }
-        if (files.length === 0) return;
         const file = files[0];
 
         const savedToken = Cookies.get('auth_token');
@@ -495,7 +495,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                                 <div className="grid grid-cols-4 gap-2">
                                     {set.previewUrls.map((url, i) => (
                                         <div key={i} className="relative aspect-square group">
-                                            {isRawFile(set.images[i]) ? (
+                                            {isRawFile(set.images[i]) || isHeicFile(set.images[i]) ? (
                                                 <div className="w-full h-full flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-white shadow-sm bg-amber-50 text-amber-500 p-1">
                                                     <span className="text-lg">📷</span>
                                                     <span className="text-[9px] font-bold text-center break-all line-clamp-2">{set.images[i].name}</span>
@@ -520,7 +520,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
 
                                 {set.failedFiles.length > 0 && (
                                     <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl p-3 space-y-1">
-                                        <p className="font-black">変換に失敗したファイル:</p>
+                                        <p className="font-black">ブラウザでの変換に失敗したファイル(送信時にサーバー側で変換を試みます):</p>
                                         <ul className="space-y-0.5">
                                             {set.failedFiles.map((f, fi) => (
                                                 <li key={fi} className="flex items-center justify-between gap-2">

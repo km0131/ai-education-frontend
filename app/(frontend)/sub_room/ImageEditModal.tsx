@@ -87,11 +87,11 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
         if (!rawFile) return;
 
         const { files, failures } = await processSelectedFiles([rawFile]);
+        if (files.length === 0) return; // .AAE/.MOV等の除外対象のみ送信をやめる
         if (failures.length > 0) {
-            alert(`画像の変換に失敗しました: ${failures[0].name}(${failures[0].reason})`);
-            return;
+            // ブラウザでの変換には失敗したが、元ファイルのまま送信してバックエンドのフォールバックに委ねる
+            console.warn(`HEIC変換に失敗したため元ファイルのまま送信します: ${failures[0].name}(${failures[0].reason})`);
         }
-        if (files.length === 0) return;
         const file = files[0];
 
         const savedToken = document.cookie
