@@ -7,6 +7,7 @@ import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
 import { buildUploadImageFiles, prefetchUploadImageFiles } from '@/src/lib/imageResize';
 import { processSelectedFiles, isRawFile, isHeicFile, HeicConversionFailure } from '@/src/lib/heicConvert';
+import { watchConversionStatus, UploadedPhotoInfo } from '@/src/lib/conversionStatus';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 // ========================================================
@@ -139,6 +140,13 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
             });
 
             if (res.ok) {
+                const uploaded = await res.json().catch(() => null) as UploadedPhotoInfo | null;
+                if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                    watchConversionStatus(`${API_URL}/api/v1/test/photo_status`, savedToken, [{ photoId: uploaded.ID, fileName: file.name }], (fileName, reason) => {
+                        console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                        alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。この画像はテストデータに含まれていない可能性があります。`);
+                    });
+                }
                 fetchRegisteredImages();
                 onSuccess();
             } else {
@@ -372,6 +380,11 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
 
             const resizedFilePromises = prefetchUploadImageFiles(flatItems.map((item) => item.file));
 
+            // フロント(createImageBitmap/heic2any)のどちらでも変換できず、バックエンドの
+            // heif-convert/exiftoolフォールバックが非同期で必要になった画像はここに積み、
+            // アップロードループ完了後にバックグラウンドで完了確認する(送信ループはブロックしない)
+            const pendingConversions: { photoId: number; fileName: string }[] = [];
+
             // アップロードは後続処理の都合上1枚ずつ順番に送信する(並行実行はしない)
             for (let i = 0; i < flatItems.length; i++) {
                 const { correctLabelName } = flatItems[i];
@@ -385,13 +398,24 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                     if (resized) formData.append('resized_file', resized);
                     formData.append('batch_id', uploadBatchId);
 
-                    await uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken);
+                    const uploaded = await uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken) as UploadedPhotoInfo | null;
+                    if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                        pendingConversions.push({ photoId: uploaded.ID, fileName: original.name });
+                    }
                     completedCount += 1;
                     setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(${completedCount}/${totalCount}枚)` });
                 } catch (err) {
                     throw new Error(err instanceof Error ? `${correctLabelName}: ${err.message}` : `${correctLabelName} の送信に失敗`);
                 }
             }
+
+            if (pendingConversions.length > 0) {
+                watchConversionStatus(`${API_URL}/api/v1/test/photo_status`, savedToken, pendingConversions, (fileName, reason) => {
+                    console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                    alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。このテスト画像は登録されていない可能性があります。`);
+                });
+            }
+
             setStatusModal({ type: 'success', message: 'テストデータの登録が完了しました！' });
             revokeAllPreviews(uploadSets);
             setUploadSets([{correctLabelName: '', images: [], previewUrls: [], failedFiles: []}]);

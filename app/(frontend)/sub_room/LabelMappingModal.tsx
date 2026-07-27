@@ -54,7 +54,7 @@ export default function LabelMappingModal({
                     ?.split('=')[1];
 
                 // テストラベル一覧を取得
-                const labelRes = await fetch(`${API_URL}/api/v1/test/get_test_label`, {
+                const labelRes = await fetch(`${API_URL}/api/v1/test/get_test_label_options`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${savedToken}`,

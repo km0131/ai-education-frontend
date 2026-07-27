@@ -13,7 +13,10 @@ function sleep(ms: number) {
 }
 
 // タイムアウト付きでアップロードし、失敗時は間隔を空けてリトライする。
-export async function uploadImageWithRetry(url: string, formData: FormData, token: string | undefined): Promise<void> {
+// 戻り値はサーバーが返したレスポンスボディ(成功時)。HEIC/RAWのバックエンドフォールバックが
+// 非同期で必要になった場合、呼び出し側はここに含まれるconversion_status/IDを見て
+// 完了ポーリング(conversionStatus.ts)に回せる。
+export async function uploadImageWithRetry(url: string, formData: FormData, token: string | undefined): Promise<unknown> {
     let lastError: Error = new Error('通信に失敗しました');
 
     for (let attempt = 0; attempt <= UPLOAD_MAX_RETRIES; attempt++) {
@@ -36,7 +39,7 @@ export async function uploadImageWithRetry(url: string, formData: FormData, toke
                 // どのファイルが失敗したか分かるようメッセージに含める。
                 throw new Error(errorData.filename ? `${errorData.filename}: ${message}` : message);
             }
-            return;
+            return await res.json().catch(() => null);
         } catch (err) {
             clearTimeout(timeoutId);
             lastError =

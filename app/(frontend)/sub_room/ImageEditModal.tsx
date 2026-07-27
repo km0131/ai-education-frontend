@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '@/src/lib/api';
 import { buildUploadImageFiles } from '@/src/lib/imageResize';
 import { processSelectedFiles } from '@/src/lib/heicConvert';
+import { watchConversionStatus, UploadedPhotoInfo } from '@/src/lib/conversionStatus';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 
 // バックエンドのデータ構造に合わせた型定義
@@ -119,6 +120,14 @@ export const ImageEditModal: React.FC<ImageEditModalProps> = ({
             });
 
             if (res.ok) {
+                const data = await res.json().catch(() => null) as { photo?: UploadedPhotoInfo } | null;
+                const uploaded = data?.photo;
+                if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                    watchConversionStatus(`${API_URL}/api/v1/ai/photo_status`, savedToken, [{ photoId: uploaded.ID, fileName: file.name }], (fileName, reason) => {
+                        console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                        alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。この画像は学習データに含まれていない可能性があります。`);
+                    });
+                }
                 fetchImages();
             } else {
                 const errorData = await res.json().catch(() => ({}));

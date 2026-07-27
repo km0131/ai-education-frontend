@@ -6,6 +6,7 @@ import { API_URL } from '@/src/lib/api';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
 import { prefetchUploadImageFiles } from '@/src/lib/imageResize';
 import { processSelectedFiles, isRawFile, isHeicFile, HeicConversionFailure } from '@/src/lib/heicConvert';
+import { watchConversionStatus, UploadedPhotoInfo } from '@/src/lib/conversionStatus';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 interface CreateAiModalProps {
@@ -140,6 +141,11 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
 
             const resizedFilePromises = prefetchUploadImageFiles(flatItems.map((item) => item.file));
 
+            // フロント(createImageBitmap/heic2any)のどちらでも変換できず、バックエンドの
+            // heif-convert/exiftoolフォールバックが非同期で必要になった画像はここに積み、
+            // アップロードループ完了後にバックグラウンドで完了確認する(送信ループはブロックしない)
+            const pendingConversions: { photoId: number; fileName: string }[] = [];
+
             // アップロードは後続処理の都合上1枚ずつ順番に送信する(並行実行はしない)
             for (let i = 0; i < flatItems.length; i++) {
                 const { categoryId, categoryName } = flatItems[i];
@@ -155,12 +161,22 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
                     formData.append('file', original);
                     if (resized) formData.append('resized_file', resized);
 
-                    await uploadImageWithRetry(`${API_URL}/api/v1/ai/upload_image`, formData, savedToken);
+                    const uploaded = await uploadImageWithRetry(`${API_URL}/api/v1/ai/upload_image`, formData, savedToken) as UploadedPhotoInfo | null;
+                    if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                        pendingConversions.push({ photoId: uploaded.ID, fileName: original.name });
+                    }
                     completedCount += 1;
                     setStatusModal({ type: 'loading', message: `画像を送信しています…(${completedCount}/${totalCount}枚)` });
                 } catch (err) {
                     throw new Error(err instanceof Error ? `${categoryName}: ${err.message}` : `${categoryName} の画像送信に失敗しました`);
                 }
+            }
+
+            if (pendingConversions.length > 0) {
+                watchConversionStatus(`${API_URL}/api/v1/ai/photo_status`, savedToken, pendingConversions, (fileName, reason) => {
+                    console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                    alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。この画像は学習データに含まれていない可能性があります。`);
+                });
             }
 
             setStatusModal({ type: 'success', message: 'すべての画像データの送信が完了しました！' });
