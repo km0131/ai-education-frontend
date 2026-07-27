@@ -6,6 +6,8 @@ import { API_URL } from '@/src/lib/api';
 import VirtualizedPhotoGrid from '@/src/components/VirtualizedPhotoGrid';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
 import { buildUploadImageFiles, prefetchUploadImageFiles } from '@/src/lib/imageResize';
+import { processSelectedFiles, isRawFile, isHeicFile, HeicConversionFailure } from '@/src/lib/heicConvert';
+import { watchConversionStatus, UploadedPhotoInfo } from '@/src/lib/conversionStatus';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 // ========================================================
@@ -21,6 +23,7 @@ interface TestUploadSet {
     correctLabelName: string;
     images: File[];
     previewUrls: string[];
+    failedFiles: HeicConversionFailure[];
 }
 
 interface ManageTestModalProps {
@@ -108,8 +111,17 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
     };
 
     const handleAddImageInView = async (correctLabelName: string,currentBatchId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const rawFile = e.target.files?.[0];
+        e.target.value = '';
+        if (!rawFile) return;
+
+        const { files, failures } = await processSelectedFiles([rawFile]);
+        if (files.length === 0) return; // .AAE/.MOV等の除外対象のみ送信をやめる
+        if (failures.length > 0) {
+            // ブラウザでの変換には失敗したが、元ファイルのまま送信してバックエンドのフォールバックに委ねる
+            console.warn(`HEIC変換に失敗したため元ファイルのまま送信します: ${failures[0].name}(${failures[0].reason})`);
+        }
+        const file = files[0];
 
         const savedToken = Cookies.get('auth_token');
         const { original, resized } = await buildUploadImageFiles(file);
@@ -128,16 +140,22 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
             });
 
             if (res.ok) {
+                const uploaded = await res.json().catch(() => null) as UploadedPhotoInfo | null;
+                if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                    watchConversionStatus(`${API_URL}/api/v1/test/photo_status`, savedToken, [{ photoId: uploaded.ID, fileName: file.name }], (fileName, reason) => {
+                        console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                        alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。この画像はテストデータに含まれていない可能性があります。`);
+                    });
+                }
                 fetchRegisteredImages();
                 onSuccess();
             } else {
                 const errorData = await res.json().catch(() => ({}));
-                alert(`画像の追加に失敗しました: ${errorData.error || 'エラー'}`);
+                const prefix = errorData.filename ? `${errorData.filename}: ` : '';
+                alert(`画像の追加に失敗しました: ${prefix}${errorData.error || 'エラー'}`);
             }
         } catch (err) {
             alert('通信エラーが発生しました');
-        } finally {
-            e.target.value = '';
         }
     };
 
@@ -181,7 +199,7 @@ function TestImageViewSection({ classId, onSuccess }: TestImageViewSectionProps)
                                                 <span>📷 1枚追加</span>
                                                 <input
                                                     type="file"
-                                                    accept="image/*"
+                                                    accept="image/*,.heic,.heif,.cr2,.cr3"
                                                     className="hidden"
                                                     onChange={(e) => handleAddImageInView(labelName, batchIdKey, e)}
                                                 />
@@ -222,7 +240,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
     const [mode, setMode] = useState<ViewMode>('menu');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [uploadSets, setUploadSets] = useState<TestUploadSet[]>([
-        {correctLabelName: '', images: [], previewUrls: []}
+        {correctLabelName: '', images: [], previewUrls: [], failedFiles: []}
     ]);
     const [labels, setLabels] = useState<string[]>([]);
     const [labelsLoading, setLabelsLoading] = useState(false);
@@ -278,12 +296,12 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
 
     const handleClose = () => {
         revokeAllPreviews(uploadSets);
-        setUploadSets([{correctLabelName: '', images: [], previewUrls: []}]);
+        setUploadSets([{correctLabelName: '', images: [], previewUrls: [], failedFiles: []}]);
         setMode('menu');
         onClose();
     };
 
-    const handleAddSet = () => setUploadSets(prev => [...prev, {correctLabelName: '', images: [], previewUrls: []}]);
+    const handleAddSet = () => setUploadSets(prev => [...prev, {correctLabelName: '', images: [], previewUrls: [], failedFiles: []}]);
     const handleRemoveSet = (index: number) => {
         if (uploadSets.length > 1) {
             uploadSets[index].previewUrls.forEach(url => URL.revokeObjectURL(url));
@@ -293,18 +311,34 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
     const handleLabelChange = (index: number, value: string) => {
         setUploadSets(prev => prev.map((set, i) => i === index ? {...set, correctLabelName: value} : set));
     };
-    const handleImageChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(e.target.files || []);
-        if (files.length > 0) {
-            setUploadSets(prev => prev.map((set, i) => {
-                if (i === index) {
-                    const newUrls = files.map(file => URL.createObjectURL(file));
-                    return {...set, images: [...set.images, ...files], previewUrls: [...set.previewUrls, ...newUrls]};
-                }
-                return set;
-            }));
-        }
+    const handleImageChange = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+        const rawFiles = Array.from(e.target.files || []);
         e.target.value = '';
+        if (rawFiles.length === 0) return;
+
+        const { files, failures } = await processSelectedFiles(rawFiles);
+
+        setUploadSets(prev => prev.map((set, i) => {
+            if (i === index) {
+                const newUrls = files.map(file => URL.createObjectURL(file));
+                return {
+                    ...set,
+                    images: [...set.images, ...files],
+                    previewUrls: [...set.previewUrls, ...newUrls],
+                    failedFiles: [...set.failedFiles, ...failures]
+                };
+            }
+            return set;
+        }));
+    };
+
+    const handleFailedFileDismiss = (setIndex: number, failIndex: number) => {
+        setUploadSets(prev => prev.map((set, i) => {
+            if (i === setIndex) {
+                return { ...set, failedFiles: set.failedFiles.filter((_, fi) => fi !== failIndex) };
+            }
+            return set;
+        }));
     };
     const handleImageRemove = (setIndex: number, imageIndex: number) => {
         setUploadSets(prev => prev.map((set, i) => {
@@ -346,6 +380,11 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
 
             const resizedFilePromises = prefetchUploadImageFiles(flatItems.map((item) => item.file));
 
+            // フロント(createImageBitmap/heic2any)のどちらでも変換できず、バックエンドの
+            // heif-convert/exiftoolフォールバックが非同期で必要になった画像はここに積み、
+            // アップロードループ完了後にバックグラウンドで完了確認する(送信ループはブロックしない)
+            const pendingConversions: { photoId: number; fileName: string }[] = [];
+
             // アップロードは後続処理の都合上1枚ずつ順番に送信する(並行実行はしない)
             for (let i = 0; i < flatItems.length; i++) {
                 const { correctLabelName } = flatItems[i];
@@ -359,16 +398,27 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                     if (resized) formData.append('resized_file', resized);
                     formData.append('batch_id', uploadBatchId);
 
-                    await uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken);
+                    const uploaded = await uploadImageWithRetry(`${API_URL}/api/v1/test/uploading_test_image`, formData, savedToken) as UploadedPhotoInfo | null;
+                    if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                        pendingConversions.push({ photoId: uploaded.ID, fileName: original.name });
+                    }
                     completedCount += 1;
                     setStatusModal({ type: 'loading', message: `テスト画像を送信しています…(${completedCount}/${totalCount}枚)` });
                 } catch (err) {
                     throw new Error(err instanceof Error ? `${correctLabelName}: ${err.message}` : `${correctLabelName} の送信に失敗`);
                 }
             }
+
+            if (pendingConversions.length > 0) {
+                watchConversionStatus(`${API_URL}/api/v1/test/photo_status`, savedToken, pendingConversions, (fileName, reason) => {
+                    console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                    alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。このテスト画像は登録されていない可能性があります。`);
+                });
+            }
+
             setStatusModal({ type: 'success', message: 'テストデータの登録が完了しました！' });
             revokeAllPreviews(uploadSets);
-            setUploadSets([{correctLabelName: '', images: [], previewUrls: []}]);
+            setUploadSets([{correctLabelName: '', images: [], previewUrls: [], failedFiles: []}]);
             onSuccess();
         } catch (error: any) {
             setStatusModal({ type: 'error', message: error.message || '送信に失敗しました' });
@@ -469,9 +519,16 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                                 <div className="grid grid-cols-4 gap-2">
                                     {set.previewUrls.map((url, i) => (
                                         <div key={i} className="relative aspect-square group">
-                                            <img src={url}
-                                                 className="w-full h-full object-cover rounded-xl border-2 border-white shadow-sm"
-                                                 alt="preview"/>
+                                            {isRawFile(set.images[i]) || isHeicFile(set.images[i]) ? (
+                                                <div className="w-full h-full flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-white shadow-sm bg-amber-50 text-amber-500 p-1">
+                                                    <span className="text-lg">📷</span>
+                                                    <span className="text-[9px] font-bold text-center break-all line-clamp-2">{set.images[i].name}</span>
+                                                </div>
+                                            ) : (
+                                                <img src={url}
+                                                     className="w-full h-full object-cover rounded-xl border-2 border-white shadow-sm"
+                                                     alt="preview"/>
+                                            )}
                                             <button type="button" onClick={() => handleImageRemove(setIdx, i)}
                                                     className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-[10px] font-black shadow flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">✕
                                             </button>
@@ -480,10 +537,24 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
                                     <label
                                         className="aspect-square border-2 border-dashed border-amber-200 rounded-xl flex flex-col items-center justify-center text-amber-400 cursor-pointer hover:bg-white hover:border-amber-400 transition-all text-lg font-bold">
                                         <span>+</span>
-                                        <input type="file" className="hidden" multiple accept="image/*"
+                                        <input type="file" className="hidden" multiple accept="image/*,.heic,.heif,.cr2,.cr3"
                                                onChange={(e) => handleImageChange(setIdx, e)}/>
                                     </label>
                                 </div>
+
+                                {set.failedFiles.length > 0 && (
+                                    <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl p-3 space-y-1">
+                                        <p className="font-black">ブラウザでの変換に失敗したファイル(送信時にサーバー側で変換を試みます):</p>
+                                        <ul className="space-y-0.5">
+                                            {set.failedFiles.map((f, fi) => (
+                                                <li key={fi} className="flex items-center justify-between gap-2">
+                                                    <span className="break-all">{f.name}（{f.reason}）</span>
+                                                    <button type="button" onClick={() => handleFailedFileDismiss(setIdx, fi)} className="shrink-0 text-red-400 hover:text-red-600 font-black">✕</button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
                                 <input
                                     className="w-full p-3 border-2 border-amber-50 rounded-xl font-bold text-gray-800 focus:ring-4 focus:ring-amber-50 focus:border-amber-400 outline-none transition-all placeholder:text-gray-300 text-sm"
                                     placeholder="テストの正解ラベル名（例：牛）"

@@ -5,6 +5,8 @@ import Cookies from 'js-cookie';
 import { API_URL } from '@/src/lib/api';
 import { uploadImageWithRetry } from '@/src/lib/uploadWithRetry';
 import { prefetchUploadImageFiles } from '@/src/lib/imageResize';
+import { processSelectedFiles, isRawFile, isHeicFile, HeicConversionFailure } from '@/src/lib/heicConvert';
+import { watchConversionStatus, UploadedPhotoInfo } from '@/src/lib/conversionStatus';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 interface CreateAiModalProps {
@@ -18,13 +20,14 @@ interface AiSet {
     name: string;
     images: File[];
     previewUrls: string[];
+    failedFiles: HeicConversionFailure[];
 }
 
 export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiModalProps) {
     const [aiProjectTitle, setAiProjectTitle] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [aiSets, setAiSets] = useState<AiSet[]>([
-        { name: '', images: [], previewUrls: [] }
+        { name: '', images: [], previewUrls: [], failedFiles: [] }
     ]);
     const [statusModal, setStatusModal] = useState<UploadStatus>(null);
 
@@ -48,12 +51,12 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
     const handleClose = () => {
         revokeAllPreviews(aiSets);
         setAiProjectTitle('');
-        setAiSets([{ name: '', images: [], previewUrls: [] }]);
+        setAiSets([{ name: '', images: [], previewUrls: [], failedFiles: [] }]);
         onClose();
     };
 
     const handleAddSet = () => {
-        setAiSets(prev => [...prev, { name: '', images: [], previewUrls: [] }]);
+        setAiSets(prev => [...prev, { name: '', images: [], previewUrls: [], failedFiles: [] }]);
     };
 
     const handleRemoveSet = (index: number) => {
@@ -67,22 +70,36 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
         setAiSets(prev => prev.map((set, i) => i === index ? { ...set, [field]: value } : set));
     };
 
-    const handleSetImageChange = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(e.target.files || []);
-        if (files.length > 0) {
-            setAiSets(prev => prev.map((set, i) => {
-                if (i === index) {
-                    const newUrls = files.map(file => URL.createObjectURL(file));
-                    return {
-                        ...set,
-                        images: [...set.images, ...files],
-                        previewUrls: [...set.previewUrls, ...newUrls]
-                    };
-                }
-                return set;
-            }));
-        }
+    const handleSetImageChange = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+        const rawFiles = Array.from(e.target.files || []);
         e.target.value = '';
+        if (rawFiles.length === 0) return;
+
+        // HEIC/HEIFはここでJPEGに変換し、.AAE/.MOV等の非画像ファイルは除外する。
+        // 変換に失敗したファイルはfailedFilesに積んで一覧表示し、送信対象には含めない。
+        const { files, failures } = await processSelectedFiles(rawFiles);
+
+        setAiSets(prev => prev.map((set, i) => {
+            if (i === index) {
+                const newUrls = files.map(file => URL.createObjectURL(file));
+                return {
+                    ...set,
+                    images: [...set.images, ...files],
+                    previewUrls: [...set.previewUrls, ...newUrls],
+                    failedFiles: [...set.failedFiles, ...failures]
+                };
+            }
+            return set;
+        }));
+    };
+
+    const handleSetFailedFileDismiss = (setIndex: number, failIndex: number) => {
+        setAiSets(prev => prev.map((set, i) => {
+            if (i === setIndex) {
+                return { ...set, failedFiles: set.failedFiles.filter((_, fi) => fi !== failIndex) };
+            }
+            return set;
+        }));
     };
 
     const handleSetImageRemove = (setIndex: number, imageIndex: number) => {
@@ -124,6 +141,11 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
 
             const resizedFilePromises = prefetchUploadImageFiles(flatItems.map((item) => item.file));
 
+            // フロント(createImageBitmap/heic2any)のどちらでも変換できず、バックエンドの
+            // heif-convert/exiftoolフォールバックが非同期で必要になった画像はここに積み、
+            // アップロードループ完了後にバックグラウンドで完了確認する(送信ループはブロックしない)
+            const pendingConversions: { photoId: number; fileName: string }[] = [];
+
             // アップロードは後続処理の都合上1枚ずつ順番に送信する(並行実行はしない)
             for (let i = 0; i < flatItems.length; i++) {
                 const { categoryId, categoryName } = flatItems[i];
@@ -139,7 +161,10 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
                     formData.append('file', original);
                     if (resized) formData.append('resized_file', resized);
 
-                    await uploadImageWithRetry(`${API_URL}/api/v1/ai/upload_image`, formData, savedToken);
+                    const uploaded = await uploadImageWithRetry(`${API_URL}/api/v1/ai/upload_image`, formData, savedToken) as UploadedPhotoInfo | null;
+                    if (uploaded?.ConversionStatus === 'processing' && uploaded.ID) {
+                        pendingConversions.push({ photoId: uploaded.ID, fileName: original.name });
+                    }
                     completedCount += 1;
                     setStatusModal({ type: 'loading', message: `画像を送信しています…(${completedCount}/${totalCount}枚)` });
                 } catch (err) {
@@ -147,10 +172,17 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
                 }
             }
 
+            if (pendingConversions.length > 0) {
+                watchConversionStatus(`${API_URL}/api/v1/ai/photo_status`, savedToken, pendingConversions, (fileName, reason) => {
+                    console.warn(`[conversionStatus] ${fileName}: ${reason}`);
+                    alert(`${fileName}: サーバー側での画像変換に失敗しました(${reason})。この画像は学習データに含まれていない可能性があります。`);
+                });
+            }
+
             setStatusModal({ type: 'success', message: 'すべての画像データの送信が完了しました！' });
             revokeAllPreviews(aiSets);
             setAiProjectTitle('');
-            setAiSets([{ name: '', images: [], previewUrls: [] }]);
+            setAiSets([{ name: '', images: [], previewUrls: [], failedFiles: [] }]);
             onSuccess();
         } catch (error: any) {
             console.error(error);
@@ -191,15 +223,36 @@ export function CreateAiModal({ isOpen, onClose, classId, onSuccess }: CreateAiM
                                 <div className="grid grid-cols-3 gap-3">
                                     {set.previewUrls.map((url, i) => (
                                         <div key={i} className="relative aspect-square group">
-                                            <img src={url} className="w-full h-full object-cover rounded-2xl border-2 border-white shadow-md" alt="preview" />
+                                            {isRawFile(set.images[i]) || isHeicFile(set.images[i]) ? (
+                                                <div className="w-full h-full flex flex-col items-center justify-center gap-1 rounded-2xl border-2 border-white shadow-md bg-indigo-50 text-indigo-400 p-1">
+                                                    <span className="text-xl">📷</span>
+                                                    <span className="text-[10px] font-bold text-center break-all line-clamp-2">{set.images[i].name}</span>
+                                                </div>
+                                            ) : (
+                                                <img src={url} className="w-full h-full object-cover rounded-2xl border-2 border-white shadow-md" alt="preview" />
+                                            )}
                                             <button type="button" onClick={() => handleSetImageRemove(setIdx, i)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-black shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
                                         </div>
                                     ))}
                                     <label className="aspect-square border-4 border-dashed border-indigo-100 rounded-2xl flex flex-col items-center justify-center text-indigo-300 cursor-pointer hover:bg-white hover:border-indigo-400 transition-all text-xl font-bold">
                                         <span>+</span>
-                                        <input type="file" className="hidden" multiple accept="image/*" onChange={(e) => handleSetImageChange(setIdx, e)} />
+                                        <input type="file" className="hidden" multiple accept="image/*,.heic,.heif,.cr2,.cr3" onChange={(e) => handleSetImageChange(setIdx, e)} />
                                     </label>
                                 </div>
+
+                                {set.failedFiles.length > 0 && (
+                                    <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-2xl p-3 space-y-1">
+                                        <p className="font-black">ブラウザでの変換に失敗したファイル(送信時にサーバー側で変換を試みます):</p>
+                                        <ul className="space-y-0.5">
+                                            {set.failedFiles.map((f, fi) => (
+                                                <li key={fi} className="flex items-center justify-between gap-2">
+                                                    <span className="break-all">{f.name}（{f.reason}）</span>
+                                                    <button type="button" onClick={() => handleSetFailedFileDismiss(setIdx, fi)} className="shrink-0 text-red-400 hover:text-red-600 font-black">✕</button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
 
                                 <input
                                     className="w-full p-4 border-2 border-indigo-50 rounded-2xl font-bold text-gray-800 focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-gray-300"
