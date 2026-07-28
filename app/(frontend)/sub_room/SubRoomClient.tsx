@@ -16,6 +16,8 @@ import LabelMappingModal from './LabelMappingModal';
 import { AiResultModal } from './AiResultModal';
 import { CertificateModal } from './CertificateModal';
 import { CollapsedCategory } from './ExplanationModal';
+import { checkAiCreationBlocked, setAiCreationBlocked } from '@/src/lib/aiCreationBlock';
+import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
 
 // --- 型定義 ---
 interface AiSet {
@@ -83,6 +85,10 @@ export default function SubRoomContent() {
     const [isCertificateModalOpen, setIsCertificateModalOpen] = useState(false);
     const [selectedProjectUuid, setSelectedProjectUuid] = useState<string>('');
     const [currentCategories, setCurrentCategories] = useState<{ category_index: number; title: string }[]>([]);
+    // 先生が「作成停止」ボタンで切り替える、このクラスでのAI新規作成/学習開始/性能テストのブロック状態
+    const [isAiCreationBlocked, setIsAiCreationBlockedState] = useState(false);
+    // ブロック中にモーダルを開こうとした際の案内表示
+    const [blockedStatusModal, setBlockedStatusModal] = useState<UploadStatus>(null);
 
     // マウント時にクッキーからトークンを取得
     useEffect(() => {
@@ -113,6 +119,9 @@ export default function SubRoomContent() {
                     const courseData = await courseRes.json();
                     setClassName(courseData.title || '無題のクラス');
                     setInviteCode(courseData.invite_code || courseData.code || '');
+                    // クラス情報取得と同時に、先生が設定したAI作成/学習/テストのブロック状態も
+                    // 反映する(リロード・再ログイン後もボタン表示が最新の状態を保つように)
+                    setIsAiCreationBlockedState(Boolean(courseData.ai_creation_blocked));
                 } else {
                     router.push('/main_room');
                     return;
@@ -157,6 +166,31 @@ export default function SubRoomContent() {
     if (!classId) {
         return <div className="min-h-screen bg-gray-50 flex items-center justify-center">読み込み中...</div>;
     }
+
+    // 「AIを新しく作成」「AIの学習開始」「AIの性能テスト」の各モーダルを開く直前に呼び、
+    // ブロックされていなければonAllowedでモーダルを開く。教師が途中でブロック設定を切り替えても
+    // 比較的最新の状態を反映できるよう、モーダルを開くタイミングで都度確認する
+    // (このチェックはUX目的。直接API呼び出しでの回避を防ぐ最終防衛はバックエンド側で行っている)。
+    const openIfNotBlocked = async (onAllowed: () => void) => {
+        const savedToken = Cookies.get('auth_token');
+        const blocked = await checkAiCreationBlocked(classId, savedToken);
+        if (blocked) {
+            setBlockedStatusModal({ type: 'error', message: '現在AIの作成やテストが出来ません' });
+            return;
+        }
+        onAllowed();
+    };
+
+    // 先生用「作成停止」トグルボタンのハンドラ
+    const handleToggleAiCreationBlock = async () => {
+        try {
+            const savedToken = Cookies.get('auth_token');
+            const next = await setAiCreationBlocked(classId, !isAiCreationBlocked, savedToken);
+            setIsAiCreationBlockedState(next);
+        } catch (error) {
+            alert(error instanceof Error ? error.message : '設定の変更に失敗しました');
+        }
+    };
 
     // オブジェクトURLのメモリ解放ユーティリティ
     const revokeAllPreviews = (sets: AiSet[]) => {
@@ -396,7 +430,7 @@ export default function SubRoomContent() {
                 case 'train':
                     console.log("AIの学習を開始:", ai.project_uuid);// 🚀 カスタム確認画面を開くための状態セット
                     setTargetAiModel(ai);
-                    setShowConfirmModal(true);
+                    openIfNotBlocked(() => setShowConfirmModal(true));
                     break;
                 case 'play':
                     router.push(`/ai/play?id=${ai.project_uuid}`);
@@ -408,13 +442,15 @@ export default function SubRoomContent() {
                     setSelectedProject(null); // メニューを閉じる
 
                     // 生徒ラベル情報を取得してモーダルを開く
-                    try {
-                        const categories = await getDescription(ai.project_uuid);
-                        setCurrentCategories(categories);
-                        setIsMappingModalOpen(true);
-                    } catch (e) {
-                        console.error(e);
-                    }
+                    openIfNotBlocked(async () => {
+                        try {
+                            const categories = await getDescription(ai.project_uuid);
+                            setCurrentCategories(categories);
+                            setIsMappingModalOpen(true);
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    });
                     break;
                 case 'explanation':
                     console.log("説明文の作成:", ai.project_uuid);
@@ -489,6 +525,19 @@ export default function SubRoomContent() {
                                             <span>⚙️</span> テストデータ管理
                                         </button>
 
+                                        {/* AI新規作成/学習開始/性能テストの一時停止トグル */}
+                                        <button
+                                            onClick={handleToggleAiCreationBlock}
+                                            className={`font-black text-xs px-4 py-2 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1 ${
+                                                isAiCreationBlocked
+                                                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                                                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200'
+                                            }`}
+                                        >
+                                            <span>{isAiCreationBlocked ? '🔒' : '🔓'}</span>
+                                            {isAiCreationBlocked ? '作成停止中' : '作成停止'}
+                                        </button>
+
                                         {/* 管理用モーダル本体 */}
                                         <ManageTestModal
                                             isOpen={isTestModalOpen}
@@ -500,13 +549,20 @@ export default function SubRoomContent() {
                                         />
                                     </>
                                 )}
+
+                                {/* 生徒向け: ブロック中であることのみを知らせる読み取り専用バッジ(切り替え不可) */}
+                                {userInfo?.role === 'student' && isAiCreationBlocked && (
+                                    <span className="flex items-center gap-1.5 bg-red-50 border border-red-200 px-3 py-1 rounded-xl shadow-sm text-xs font-black text-red-700">
+                                        <span>🔒</span> 作成停止中
+                                    </span>
+                                )}
                             </div>
                         </div>
 
                         {/* 右側セクション: AI作成ボタン & ユーザー情報 */}
                         <div className="flex items-center gap-5">
                             <button
-                                onClick={() => setIsAiModalOpen(true)}
+                                onClick={() => openIfNotBlocked(() => setIsAiModalOpen(true))}
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all flex items-center gap-1.5"
                             >
                                 <span>✨ AIを新しく作る</span>
@@ -743,6 +799,12 @@ export default function SubRoomContent() {
                     projectTitle={targetAiModel?.title || '無題のAI'}
                     courseName={className}
                     updatedAt={targetAiModel?.updated_at}
+                />
+
+                {/* AI作成/学習/テストがブロックされている場合の案内モーダル */}
+                <UploadStatusModal
+                    status={blockedStatusModal}
+                    onClose={() => setBlockedStatusModal(null)}
                 />
             </div>
         );
