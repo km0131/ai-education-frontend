@@ -18,6 +18,12 @@ import { CertificateModal } from './CertificateModal';
 import { CollapsedCategory } from './ExplanationModal';
 import { checkAiCreationBlocked, setAiCreationBlocked } from '@/src/lib/aiCreationBlock';
 import { UploadStatusModal, UploadStatus } from '@/src/components/UploadStatusModal';
+import { ContainerCard, ProgramContainer } from './ContainerCard';
+import { CreateContainerModal } from './CreateContainerModal';
+import { TeacherDashboardModal } from './TeacherDashboardModal';
+import { WorkspaceLayout } from '@/src/components/workspace/WorkspaceLayout';
+import { PeerViewerPanel } from '@/src/components/workspace/PeerViewerPanel';
+import { FEATURE_TYPE_WEB_DEV } from '@/src/lib/featureTypes';
 
 // --- 型定義 ---
 interface AiSet {
@@ -59,8 +65,28 @@ export default function SubRoomContent() {
 
     const [className, setClassName] = useState<string>('読み込み中...');
     const [inviteCode, setInviteCode] = useState<string>('');
+    // 未設定(取得前)の間はimage_classification扱いにし、既存クラスの見た目・動作が
+    // 変わらないようにする(NextPlan.mdの移行方針: 既存クラスは自動的にimage_classification)。
+    const [featureTypeKey, setFeatureTypeKey] = useState<string>('');
+    const isWebDev = featureTypeKey === FEATURE_TYPE_WEB_DEV;
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+
+    // Web開発環境: クラス内の生徒コンテナ一覧
+    const [containers, setContainers] = useState<ProgramContainer[]>([]);
+    const [isLoadingContainers, setIsLoadingContainers] = useState(true);
+    const [isContainerActionBusy, setIsContainerActionBusy] = useState(false);
+    const [isCreateContainerModalOpen, setIsCreateContainerModalOpen] = useState(false);
+    const [isTeacherDashboardOpen, setIsTeacherDashboardOpen] = useState(false);
+    const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+    const [workspaceContainer, setWorkspaceContainer] = useState<ProgramContainer | null>(null);
+    // 生徒間でのリアルタイム相互閲覧(Peer Viewer、読み取り専用) - クラスの
+    // カード一覧で他の生徒のカードをクリックすると開く(ContainerCard.tsxの
+    // onOpenPeerView参照)。
+    const [peerViewTarget, setPeerViewTarget] = useState<{ userId: string; name: string } | null>(null);
+    // 再開/停止/削除の進行中・失敗通知(CreateContainerModalと同じUploadStatusModal
+    // デザインに統一。失敗時はretryableに応じて「もう一度試す」ボタンを出す)。
+    const [containerStatusModal, setContainerStatusModal] = useState<UploadStatus>(null);
 
     const [aiModels, setAiModels] = useState<AiModel[]>([]);
     const [isLoadingAi, setIsLoadingAi] = useState(true);
@@ -119,6 +145,7 @@ export default function SubRoomContent() {
                     const courseData = await courseRes.json();
                     setClassName(courseData.title || '無題のクラス');
                     setInviteCode(courseData.invite_code || courseData.code || '');
+                    setFeatureTypeKey(courseData.feature_type_key || '');
                     // クラス情報取得と同時に、先生が設定したAI作成/学習/テストのブロック状態も
                     // 反映する(リロード・再ログイン後もボタン表示が最新の状態を保つように)
                     setIsAiCreationBlockedState(Boolean(courseData.ai_creation_blocked));
@@ -161,6 +188,89 @@ export default function SubRoomContent() {
 
         fetchRoomData();
     }, [searchParams, router]);
+
+    // Web開発環境: クラス内のコンテナ一覧を取得(画像分類AIのaicard一覧取得と同様の位置づけ)
+    const fetchContainers = async () => {
+        const id = searchParams.get('id');
+        if (!id) return;
+        setIsLoadingContainers(true);
+        try {
+            const res = await securedFetch('/api/v2/program/containers', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({course_id: Number(id)}),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setContainers(data.containers || []);
+            }
+        } catch (error) {
+            console.error('[Error] fetchContainers 例外:', error);
+        } finally {
+            setIsLoadingContainers(false);
+        }
+    };
+
+    useEffect(() => {
+        if (featureTypeKey !== FEATURE_TYPE_WEB_DEV) return;
+        fetchContainers();
+    }, [featureTypeKey, searchParams]);
+
+    const runContainerAction = async (
+        path: string,
+        method: 'POST' | 'DELETE',
+        failureMessage: string,
+        loadingMessage: string,
+    ) => {
+        const id = searchParams.get('id');
+        if (!id) return;
+        setIsContainerActionBusy(true);
+        setContainerStatusModal({ type: 'loading', message: loadingMessage });
+        try {
+            const res = await securedFetch(path, {
+                method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({course_id: Number(id)}),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                // retryableが明示的にfalseの時だけ再試行を隠す(未指定時は再試行を
+                // 許可する側に倒す。CreateContainerModalと同じ方針)。
+                const retryable = data.retryable !== false;
+                setContainerStatusModal({
+                    type: 'error',
+                    message: data.error || failureMessage,
+                    ...(retryable
+                        ? { onRetry: () => runContainerAction(path, method, failureMessage, loadingMessage), retryLabel: 'もう一度試す' }
+                        : {}),
+                });
+                return;
+            }
+            setContainerStatusModal(null);
+            await fetchContainers();
+        } catch (error) {
+            console.error(error);
+            setContainerStatusModal({
+                type: 'error',
+                message: error instanceof Error ? error.message : failureMessage,
+                onRetry: () => runContainerAction(path, method, failureMessage, loadingMessage),
+                retryLabel: 'もう一度試す',
+            });
+        } finally {
+            setIsContainerActionBusy(false);
+        }
+    };
+
+    const handleResumeContainer = () =>
+        runContainerAction('/api/v2/program/container/resume', 'POST', 'コンテナの再開に失敗しました', '環境を再開しています...');
+
+    const handleStopContainer = () =>
+        runContainerAction('/api/v2/program/container/stop', 'POST', 'コンテナの停止に失敗しました', '環境を停止しています...');
+
+    const handleDeleteContainer = () => {
+        if (!confirm('本当にコンテナを削除しますか？保存されていない作業内容は失われます。')) return;
+        runContainerAction('/api/v2/program/container', 'DELETE', 'コンテナの削除に失敗しました', '環境を削除しています...');
+    };
 
     const classId = searchParams.get('id');
     if (!classId) {
@@ -517,41 +627,56 @@ export default function SubRoomContent() {
                             </span>
                                         </div>
 
-                                        {/* テストデータ管理モーダルを開くボタン */}
-                                        <button
-                                            onClick={() => setIsTestModalOpen(true)}
-                                            className="bg-amber-600 hover:bg-amber-700 text-white font-black text-xs px-4 py-2 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1"
-                                        >
-                                            <span>⚙️</span> テストデータ管理
-                                        </button>
+                                        {/* テストデータ管理・作成停止トグルは画像分類AI専用の機能 */}
+                                        {!isWebDev && (
+                                            <>
+                                                {/* テストデータ管理モーダルを開くボタン */}
+                                                <button
+                                                    onClick={() => setIsTestModalOpen(true)}
+                                                    className="bg-amber-600 hover:bg-amber-700 text-white font-black text-xs px-4 py-2 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1"
+                                                >
+                                                    <span>⚙️</span> テストデータ管理
+                                                </button>
 
-                                        {/* AI新規作成/学習開始/性能テストの一時停止トグル */}
-                                        <button
-                                            onClick={handleToggleAiCreationBlock}
-                                            className={`font-black text-xs px-4 py-2 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1 ${
-                                                isAiCreationBlocked
-                                                    ? 'bg-red-600 hover:bg-red-700 text-white'
-                                                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200'
-                                            }`}
-                                        >
-                                            <span>{isAiCreationBlocked ? '🔒' : '🔓'}</span>
-                                            {isAiCreationBlocked ? '作成停止中' : '作成停止'}
-                                        </button>
+                                                {/* AI新規作成/学習開始/性能テストの一時停止トグル */}
+                                                <button
+                                                    onClick={handleToggleAiCreationBlock}
+                                                    className={`font-black text-xs px-4 py-2 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1 ${
+                                                        isAiCreationBlocked
+                                                            ? 'bg-red-600 hover:bg-red-700 text-white'
+                                                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200'
+                                                    }`}
+                                                >
+                                                    <span>{isAiCreationBlocked ? '🔒' : '🔓'}</span>
+                                                    {isAiCreationBlocked ? '作成停止中' : '作成停止'}
+                                                </button>
 
-                                        {/* 管理用モーダル本体 */}
-                                        <ManageTestModal
-                                            isOpen={isTestModalOpen}
-                                            onClose={() => setIsTestModalOpen(false)}
-                                            classId={classId}
-                                            onSuccess={() => {
-                                                console.log('テストデータが更新されました');
-                                            }}
-                                        />
+                                                {/* 管理用モーダル本体 */}
+                                                <ManageTestModal
+                                                    isOpen={isTestModalOpen}
+                                                    onClose={() => setIsTestModalOpen(false)}
+                                                    classId={classId}
+                                                    onSuccess={() => {
+                                                        console.log('テストデータが更新されました');
+                                                    }}
+                                                />
+                                            </>
+                                        )}
+
+                                        {/* 教師ダッシュボード(生徒サンドボックス一覧・稼働状況)はWeb開発環境専用の機能 */}
+                                        {isWebDev && (
+                                            <button
+                                                onClick={() => setIsTeacherDashboardOpen(true)}
+                                                className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs px-4 py-2 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1"
+                                            >
+                                                <span>📊</span> ダッシュボード
+                                            </button>
+                                        )}
                                     </>
                                 )}
 
-                                {/* 生徒向け: ブロック中であることのみを知らせる読み取り専用バッジ(切り替え不可) */}
-                                {userInfo?.role === 'student' && isAiCreationBlocked && (
+                                {/* 生徒向け: ブロック中であることのみを知らせる読み取り専用バッジ(切り替え不可、画像分類AI専用) */}
+                                {!isWebDev && userInfo?.role === 'student' && isAiCreationBlocked && (
                                     <span className="flex items-center gap-1.5 bg-red-50 border border-red-200 px-3 py-1 rounded-xl shadow-sm text-xs font-black text-red-700">
                                         <span>🔒</span> 作成停止中
                                     </span>
@@ -559,14 +684,24 @@ export default function SubRoomContent() {
                             </div>
                         </div>
 
-                        {/* 右側セクション: AI作成ボタン & ユーザー情報 */}
+                        {/* 右側セクション: AI作成/コンテナ作成ボタン & ユーザー情報 */}
                         <div className="flex items-center gap-5">
-                            <button
-                                onClick={() => openIfNotBlocked(() => setIsAiModalOpen(true))}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all flex items-center gap-1.5"
-                            >
-                                <span>✨ AIを新しく作る</span>
-                            </button>
+                            {!isWebDev && (
+                                <button
+                                    onClick={() => openIfNotBlocked(() => setIsAiModalOpen(true))}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all flex items-center gap-1.5"
+                                >
+                                    <span>✨ AIを新しく作る</span>
+                                </button>
+                            )}
+                            {isWebDev && (
+                                <button
+                                    onClick={() => setIsCreateContainerModalOpen(true)}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all flex items-center gap-1.5"
+                                >
+                                    <span>🆕 コンテナを作成</span>
+                                </button>
+                            )}
                             <div className="h-6 w-[1px] bg-gray-200"/>
                             <div className="flex items-center gap-3">
                                 {userInfo ? (
@@ -618,32 +753,112 @@ export default function SubRoomContent() {
                     onSuccess={() => router.refresh()}
                 />
 
+                <CreateContainerModal
+                    isOpen={isCreateContainerModalOpen}
+                    onClose={() => setIsCreateContainerModalOpen(false)}
+                    classId={classId}
+                    onSuccess={fetchContainers}
+                />
+
+                <TeacherDashboardModal
+                    isOpen={isTeacherDashboardOpen}
+                    onClose={() => setIsTeacherDashboardOpen(false)}
+                    classId={classId}
+                    containers={containers}
+                    onRefresh={fetchContainers}
+                />
+
+                <WorkspaceLayout
+                    isOpen={isWorkspaceOpen}
+                    onClose={() => {
+                        setIsWorkspaceOpen(false);
+                        setWorkspaceContainer(null);
+                    }}
+                    classId={classId}
+                    title={workspaceContainer?.name || 'ワークスペース'}
+                />
+
+                <PeerViewerPanel
+                    isOpen={peerViewTarget !== null}
+                    onClose={() => setPeerViewTarget(null)}
+                    classId={classId}
+                    targetUserId={peerViewTarget?.userId ?? ''}
+                    targetName={peerViewTarget?.name ?? ''}
+                />
+
+                {/* コンテナ操作(再開/停止/削除)の進行中・失敗通知(CreateContainerModalと同じデザイン) */}
+                <UploadStatusModal
+                    status={containerStatusModal}
+                    onClose={() => setContainerStatusModal(null)}
+                />
+
                 {/* Main Content */}
                 <main className="flex-1 max-w-7xl mx-auto w-full p-6">
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-xl font-bold text-gray-700">みんなが作ったAIモデル</h2>
-                    </div>
+                    {isWebDev ? (
+                        <>
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-xl font-bold text-gray-700">みんなのコンテナ</h2>
+                            </div>
 
-                    {isLoadingAi ? (
-                        <div
-                            className="text-center py-20 text-gray-400 font-medium animate-pulse">AIモデルを読み込んでいます...</div>
-                    ) : aiModels.length === 0 ? (
-                        <div
-                            className="bg-white border-2 border-dashed border-gray-200 rounded-[2rem] p-16 text-center max-w-xl mx-auto mt-10">
-                            <p className="text-gray-500 font-bold mb-4 text-lg">まだこのクラスにAIモデルがありません</p>
-                            <p className="text-sm text-gray-400 mb-6">右上のボタンから最初のAIを作ってみましょう！</p>
-                        </div>
+                            {isLoadingContainers ? (
+                                <div
+                                    className="text-center py-20 text-gray-400 font-medium animate-pulse">コンテナを読み込んでいます...</div>
+                            ) : containers.length === 0 ? (
+                                <div
+                                    className="bg-white border-2 border-dashed border-gray-200 rounded-[2rem] p-16 text-center max-w-xl mx-auto mt-10">
+                                    <p className="text-gray-500 font-bold mb-4 text-lg">まだこのクラスにコンテナがありません</p>
+                                    <p className="text-sm text-gray-400 mb-6">右上のボタンから最初のコンテナを作ってみましょう！</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                                    {containers.map((container) => (
+                                        <ContainerCard
+                                            key={container.container_name}
+                                            container={container}
+                                            onResume={handleResumeContainer}
+                                            onStop={handleStopContainer}
+                                            onDelete={handleDeleteContainer}
+                                            onOpenWorkspace={() => {
+                                                setWorkspaceContainer(container);
+                                                setIsWorkspaceOpen(true);
+                                            }}
+                                            onOpenPeerView={() =>
+                                                setPeerViewTarget({ userId: container.user_id, name: container.student_name })
+                                            }
+                                            isBusy={isContainerActionBusy}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                            {aiModels.map((ai) => (
-                                <AiModelCard
-                                    key={ai.project_uuid}
-                                    ai={ai}
-                                    onSelect={(selectedAi) => setSelectedProject(selectedAi)}
-                                    onPlay={(selectedAi) => handleMenuAction('play', selectedAi)}
-                                />
-                            ))}
-                        </div>
+                        <>
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-xl font-bold text-gray-700">みんなが作ったAIモデル</h2>
+                            </div>
+
+                            {isLoadingAi ? (
+                                <div
+                                    className="text-center py-20 text-gray-400 font-medium animate-pulse">AIモデルを読み込んでいます...</div>
+                            ) : aiModels.length === 0 ? (
+                                <div
+                                    className="bg-white border-2 border-dashed border-gray-200 rounded-[2rem] p-16 text-center max-w-xl mx-auto mt-10">
+                                    <p className="text-gray-500 font-bold mb-4 text-lg">まだこのクラスにAIモデルがありません</p>
+                                    <p className="text-sm text-gray-400 mb-6">右上のボタンから最初のAIを作ってみましょう！</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                                    {aiModels.map((ai) => (
+                                        <AiModelCard
+                                            key={ai.project_uuid}
+                                            ai={ai}
+                                            onSelect={(selectedAi) => setSelectedProject(selectedAi)}
+                                            onPlay={(selectedAi) => handleMenuAction('play', selectedAi)}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </>
                     )}
                 </main>
 
