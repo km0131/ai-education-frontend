@@ -47,18 +47,17 @@ frontend/
 
 ```
 docker compose up --build
-podman-compose up --build
 ```
 
 - コンテナの停止
 ```
-podman-compose down
+docker compose down
 ```
 
 
 - コンテナの削除
 ```
-sudo docker-compose down
+docker compose down --rmi all
 ```
 
 

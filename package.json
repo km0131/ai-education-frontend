@@ -11,8 +11,13 @@
   "dependencies": {
     "@litertjs/core": "^2.5.2",
     "@litertjs/tfjs-interop": "^2.5.0",
+    "@monaco-editor/react": "^4.7.0",
     "@tensorflow/tfjs": "^4.22.0",
+    "@vscode/codicons": "^0.0.46-24",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "chart.js": "^4.4.0",
+    "github-markdown-css": "^5.9.0",
     "heic2any": "^0.0.4",
     "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
@@ -22,7 +27,9 @@
     "react": "19.2.3",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "19.2.3",
-    "react-window": "^1.8.11"
+    "react-markdown": "^10.1.0",
+    "react-window": "^1.8.11",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

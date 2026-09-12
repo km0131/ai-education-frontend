@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { securedFetch } from '@/src/lib/api';
 import Cookies from 'js-cookie';
+import { FeatureType, FEATURE_TYPE_IMAGE_CLASSIFICATION } from '@/src/lib/featureTypes';
 
 export interface ClassRoom {
     id: string;            // 小文字の id
@@ -14,6 +15,8 @@ export interface ClassRoom {
     invite_code: string;   // 招待コード
     theme_color: string;   // テーマカラー
     updata_time: string;   // ISO日時の文字列
+    feature_type_key: string;  // 機能種別のキー(例: "image_classification")
+    feature_type_name: string; // 機能種別の表示名(例: "画像分類AI")
 }
 
 export default function MainRoomPage() {
@@ -32,6 +35,9 @@ export default function MainRoomPage() {
     const [newClassName, setNewClassName] = useState('');
     const [newClassDesc, setNewClassDesc] = useState('');
     const [joinCode, setJoinCode] = useState('');
+
+    const [featureTypes, setFeatureTypes] = useState<FeatureType[]>([]);
+    const [selectedFeatureTypeId, setSelectedFeatureTypeId] = useState<number | null>(null);
 
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [createdClassCode, setCreatedClassCode] = useState('');
@@ -93,6 +99,8 @@ export default function MainRoomPage() {
                     invite_code: cls.invite_code || '',
                     theme_color: cls.theme_color || 'blue',
                     updata_time: cls.updata_time || '',
+                    feature_type_key: cls.feature_type_key || FEATURE_TYPE_IMAGE_CLASSIFICATION,
+                    feature_type_name: cls.feature_type_name || '画像分類AI',
                 }));
 
                 setClasses(mappedCourses);
@@ -108,10 +116,34 @@ export default function MainRoomPage() {
         fetchClasses();
     }, [token]);
 
+    // クラス作成フォームの選択肢を動的に取得する(ハードコードしない)
+    useEffect(() => {
+        if (!token) return;
+        const fetchFeatureTypes = async () => {
+            try {
+                const res = await securedFetch('/api/v2/feature-types');
+                if (!res.ok) throw new Error('機能種別一覧の取得に失敗しました');
+                const data = await res.json();
+                const types: FeatureType[] = data.feature_types || [];
+                setFeatureTypes(types);
+                if (types.length > 0) {
+                    setSelectedFeatureTypeId((prev) => prev ?? types[0].id);
+                }
+            } catch (error) {
+                console.error('Failed to fetch feature types:', error);
+            }
+        };
+        fetchFeatureTypes();
+    }, [token]);
+
     // クラス作成
     const handleCreateClass = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!token) return;
+        if (!selectedFeatureTypeId) {
+            alert('機能種別を選択してください');
+            return;
+        }
 
         try {
             const res = await securedFetch('/api/v1/create_class', {
@@ -123,6 +155,7 @@ export default function MainRoomPage() {
                 body: JSON.stringify({
                     className: newClassName,
                     description: newClassDesc,
+                    featureTypeId: selectedFeatureTypeId,
                 }),
             });
 
@@ -138,6 +171,7 @@ export default function MainRoomPage() {
 
                 setNewClassName('');
                 setNewClassDesc('');
+                setSelectedFeatureTypeId(featureTypes.length > 0 ? featureTypes[0].id : null);
                 setShowCreateModal(false);
             }
         } catch (error) {
@@ -378,6 +412,10 @@ export default function MainRoomPage() {
                                                     {cls.title}
                                                 </h2>
                                             </div>
+                                            {/* 機能種別バッジ */}
+                                            <span className="self-start text-[11px] bg-white/25 text-white px-2 py-0.5 rounded-md font-bold backdrop-blur-sm w-fit">
+                                                {cls.feature_type_name || '画像分類AI'}
+                                            </span>
                                             <div className="mb-1">
                                                 <p className="text-white text-base hover:underline truncate font-medium">
                                                     {cls.teacher_name}
@@ -476,6 +514,30 @@ export default function MainRoomPage() {
                                     placeholder="例: 微分積分の基礎"
                                 />
                             </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    機能種別 (必須・作成後は変更できません)
+                                </label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {featureTypes.map((ft) => (
+                                        <button
+                                            key={ft.id}
+                                            type="button"
+                                            onClick={() => setSelectedFeatureTypeId(ft.id)}
+                                            className={`px-4 py-3 rounded-md border text-sm font-medium text-left transition-colors ${
+                                                selectedFeatureTypeId === ft.id
+                                                    ? 'border-blue-600 bg-blue-50 text-blue-700 ring-1 ring-blue-600'
+                                                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            {ft.name}
+                                        </button>
+                                    ))}
+                                </div>
+                                {featureTypes.length === 0 && (
+                                    <p className="text-xs text-gray-400 mt-1">機能種別を読み込み中...</p>
+                                )}
+                            </div>
                             <div className="pt-4 flex justify-end gap-3">
                                 <button
                                     type="button"
@@ -486,8 +548,8 @@ export default function MainRoomPage() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-                                    disabled={!newClassName}
+                                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                                    disabled={!newClassName || !selectedFeatureTypeId}
                                 >
                                     作成
                                 </button>

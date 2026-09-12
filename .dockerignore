@@ -1,4 +1,20 @@
+# 依存関係・ビルド成果物。イメージ内は `bun install` で入れ直すので不要
+# (node_modulesの1.1GBがビルドコンテキストの大半を占めていた)。
 node_modules
 .next
 out
 build
+
+# 型チェックのインクリメンタルキャッシュ。コンテナ内で再生成される。
+tsconfig.tsbuildinfo
+
+# バージョン管理・秘密情報
+.git
+.gitignore
+.env
+.env.*
+
+# エディタ/OS由来
+.vscode
+.idea
+.DS_Store

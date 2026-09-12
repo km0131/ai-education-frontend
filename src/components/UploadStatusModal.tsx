@@ -5,7 +5,9 @@ import React from 'react';
 export type UploadStatus =
     | { type: 'loading'; message: string }
     | { type: 'success'; message: string }
-    | { type: 'error'; message: string }
+    // onRetry未指定 = 再試行しても無駄な失敗(閉じるボタンのみ表示)。
+    // 指定時は「もう一度試す」ボタンを追加で出す(retryLabelで文言変更可)。
+    | { type: 'error'; message: string; onRetry?: () => void; retryLabel?: string }
     | null;
 
 interface UploadStatusModalProps {
@@ -22,6 +24,7 @@ export function UploadStatusModal({ status, onClose, onSuccessConfirm }: UploadS
     if (!status) return null;
     const isLoading = status.type === 'loading';
     const isSuccess = status.type === 'success';
+    const canRetry = status.type === 'error' && !!status.onRetry;
 
     const headerColor = isLoading ? 'bg-indigo-600' : isSuccess ? 'bg-emerald-500' : 'bg-red-500';
     const title = isLoading ? '送信中...' : isSuccess ? '送信完了！' : '送信に失敗しました';
@@ -51,10 +54,27 @@ export function UploadStatusModal({ status, onClose, onSuccessConfirm }: UploadS
 
                 {!isLoading && (
                     <div className="px-8 pb-8 flex gap-3">
+                        {canRetry && (
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                className="flex-1 py-4 text-slate-600 font-black rounded-2xl active:scale-95 transition-all text-center bg-slate-100 hover:bg-slate-200"
+                            >
+                                とじる
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={() => {
-                                if (isSuccess) onSuccessConfirm?.();
+                                if (isSuccess) {
+                                    onSuccessConfirm?.();
+                                    onClose();
+                                    return;
+                                }
+                                if (canRetry && status.type === 'error') {
+                                    status.onRetry?.();
+                                    return;
+                                }
                                 onClose();
                             }}
                             className={`flex-1 py-4 text-white font-black rounded-2xl active:scale-95 transition-all text-center ${
@@ -63,7 +83,7 @@ export function UploadStatusModal({ status, onClose, onSuccessConfirm }: UploadS
                                     : 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-100'
                             }`}
                         >
-                            {isSuccess ? 'OK' : 'とじる'}
+                            {isSuccess ? 'OK' : canRetry && status.type === 'error' ? (status.retryLabel ?? 'もう一度試す') : 'とじる'}
                         </button>
                     </div>
                 )}
