@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { EditorPane } from './EditorPane';
-import { WebPreviewPane, PreviewRequest } from './WebPreviewPane';
+import { SqlSandboxViewer } from './SqlSandboxViewer';
 import { TerminalsPane, TerminalsHandle } from './TerminalsPane';
 import { ConnectionPhase } from './TerminalPane';
 import { AiChatPane } from './AiChatPane';
@@ -11,7 +11,6 @@ import { ResizeHandle } from './ResizeHandle';
 import { Icon } from './Icon';
 import { ToastHost } from './Toast';
 import { clamp, FileTreeItem, languageFromFileName, OpenFile } from './types';
-import { DEFAULT_PREVIEW_SERVER_URL, resolveRunAction } from './runCommand';
 import { securedFetch, setActingAsUser } from '@/src/lib/api';
 import { useLiveEditorChannel } from './live/useLiveEditorChannel';
 import { applyIncomingCursor, applyIncomingEditorChange } from './live/liveEditorRegistry';
@@ -27,9 +26,9 @@ const CHAT_WIDTH_MIN = 240;
 const CHAT_WIDTH_MAX = 640;
 const CHAT_WIDTH_DEFAULT = 340;
 
-const WEB_PREVIEW_WIDTH_MIN = 320;
-const WEB_PREVIEW_WIDTH_MAX = 960;
-const WEB_PREVIEW_WIDTH_DEFAULT = 480;
+const SQL_VIEWER_WIDTH_MIN = 420;
+const SQL_VIEWER_WIDTH_MAX = 1100;
+const SQL_VIEWER_WIDTH_DEFAULT = 640;
 
 // teacherContext: 講師サポート画面(TeacherLiveSessionModal.tsx)がこの
 // ワークスペースを「生徒本人の代わりに」開く場合に渡す。設定されている間は
@@ -97,21 +96,14 @@ export function WorkspaceLayout({ isOpen, onClose, classId, title, teacherContex
     const [terminalPhase, setTerminalPhase] = useState<ConnectionPhase>('connecting');
     const [terminalHeight, setTerminalHeight] = useState(TERMINAL_HEIGHT_DEFAULT);
     const [chatWidth, setChatWidth] = useState(CHAT_WIDTH_DEFAULT);
-    const [isWebPreviewOpen, setIsWebPreviewOpen] = useState(false);
-    const [webPreviewWidth, setWebPreviewWidth] = useState(WEB_PREVIEW_WIDTH_DEFAULT);
-    // 「Webプレビュー」ボタンへ「これを表示して」と伝えるための一回性の
-    // リクエスト。'file'(静的HTML)と'url'(サーバーのルートURL)を1つの
-    // 判別可能ユニオンにまとめている - 以前は2つの独立したstateに分けて
-    // いたが、片方を更新してももう片方の古い値が残ったままになり、
-    // WebPreviewPane側で両方のeffectが競合して意図しない方が表示される
-    // バグがあった(拡張子で完全に排他な1つの状態として扱うことで、この
-    // 種の競合を構造的に起こり得なくする)。同じ対象へ再度リクエストしても
-    // 確実に読み込み直されるよう、対象そのものだけでなくnonceも含める。
-    const [previewRequest, setPreviewRequest] = useState<PreviewRequest | null>(null);
+    // SQLビューア(マルチDB対応SQL実行&閲覧UI)。Editor右側のsplit paneに
+    // 独立して開く(左サイドバーの「公開」直下のSQLビューアボタンで開閉、
+    // Sidebar.tsx参照)。
+    const [isSqlViewerOpen, setIsSqlViewerOpen] = useState(false);
+    const [sqlViewerWidth, setSqlViewerWidth] = useState(SQL_VIEWER_WIDTH_DEFAULT);
     const terminalsRef = useRef<TerminalsHandle>(null);
 
     const activeFile = openFiles.find((f) => f.path === activeFilePath) ?? null;
-    const runAction = activeFile ? resolveRunAction(activeFile.path) : { kind: 'none' as const };
 
     // 講師による生徒セッションのリアルタイム監視・共同操作(ライブセッション
     // 同期)。teacherPresenceは講師が参加中かどうか(バナー/共有ターミナルの
@@ -331,81 +323,74 @@ export function WorkspaceLayout({ isOpen, onClose, classId, title, teacherContex
         setOpenFiles((prev) => prev.map((f) => (f.path === path ? { ...f, content } : f)));
     }, []);
 
-    // Ctrl/Cmd+Sまたは保存ボタン(左のファイル操作ヘッダー)から呼ばれる。常に
-    // 「今アクティブなタブ」を保存する。保存に成功したらsavedContentを
-    // 追従させ、以後「未保存の変更あり」の表示が消えるようにする。保存中に
-    // 別のタブへ切り替えられていた場合に備え、保存対象のpathで一貫して
-    // 状態を更新する(アクティブが変わっても保存自体はそのタブに対して進む)。
+    // 「すべて保存」(Save All、Ctrl/Cmd+S・Ctrl/Cmd+Shift+Sまたはツール
+    // バーボタン)。フロント側の保存経路はこれ1本に統一している(個別
+    // ファイルのPATCH /container/fileは使わない、「今アクティブなタブだけ
+    // 保存する」単一保存ボタン/ショートカットは廃止した) - 開いているタブ
+    // のうち未保存(content !== savedContent)なものをまとめて1回のリクエスト
+    // で送る(POST /container/files/save-all)。バックエンドはファイルごとに
+    // 独立して成否を返すため(1ファイルの失敗が他を巻き込まない、
+    // file_service.goのSaveSandboxFilesBatch参照)、レスポンスのresultsを
+    // 見て成功したタブだけsavedContentを追従させる。
+    //
     // async/Promiseを返す実装のままにしておく - Sidebar経由のGitPanelが
     // 「保存(コミット)」前にonBeforeCommitとしてこれをawaitし、未保存の
     // 編集内容をコミット前に確実に書き込ませているため(先に完了を待たないと
     // ファイル書き込みとgit commitが競合し得る)。
-    const handleSaveFile = useCallback(async () => {
-        const target = openFiles.find((f) => f.path === activeFilePath);
-        if (!target || target.content === target.savedContent) return;
-        const { path, content } = target;
+    const [isSavingAll, setIsSavingAll] = useState(false);
+    const handleSaveAllFiles = useCallback(async () => {
+        const dirty = openFiles.filter((f) => f.content !== f.savedContent);
+        if (dirty.length === 0) return;
 
-        setOpenFiles((prev) => prev.map((f) => (f.path === path ? { ...f, isSaving: true, saveError: null } : f)));
+        setIsSavingAll(true);
+        setOpenFiles((prev) =>
+            prev.map((f) => (f.content !== f.savedContent ? { ...f, isSaving: true, saveError: null } : f)),
+        );
         try {
-            const res = await securedFetch('/api/v2/program/container/file', {
-                method: 'PATCH',
+            const res = await securedFetch('/api/v2/program/container/files/save-all', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ course_id: Number(classId), path, content }),
+                body: JSON.stringify({
+                    course_id: Number(classId),
+                    files: dirty.map((f) => ({ path: f.path, content: f.content })),
+                }),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || '保存に失敗しました');
+            if (!res.ok) throw new Error(data.error || '一括保存に失敗しました');
+
+            const results: { path: string; ok: boolean; error?: string }[] = Array.isArray(data.results)
+                ? data.results
+                : [];
+            const okPaths = new Set(results.filter((r) => r.ok).map((r) => r.path));
+            const errorByPath = new Map(results.filter((r) => !r.ok).map((r) => [r.path, r.error || '保存に失敗しました']));
+
             setOpenFiles((prev) =>
-                prev.map((f) => (f.path === path ? { ...f, savedContent: content, isSaving: false } : f)),
+                prev.map((f) => {
+                    if (okPaths.has(f.path)) {
+                        return { ...f, savedContent: f.content, isSaving: false, saveError: null };
+                    }
+                    if (errorByPath.has(f.path)) {
+                        return { ...f, isSaving: false, saveError: errorByPath.get(f.path)! };
+                    }
+                    return f.isSaving ? { ...f, isSaving: false } : f;
+                }),
             );
-            // 保存(ディスクへの書き込み)はコミット前でもgit statusを変化させる
-            // ため、相手側のソース管理パネル(変更ファイル一覧)にも即時反映
-            // させる(workspace-refresh、'git'理由)。
             handleWorkspaceMutated('git');
         } catch (err) {
-            const message = err instanceof Error ? err.message : '保存に失敗しました';
+            const message = err instanceof Error ? err.message : '一括保存に失敗しました';
             setOpenFiles((prev) =>
-                prev.map((f) => (f.path === path ? { ...f, isSaving: false, saveError: message } : f)),
+                prev.map((f) => (f.content !== f.savedContent ? { ...f, isSaving: false, saveError: message } : f)),
             );
+        } finally {
+            setIsSavingAll(false);
         }
-    }, [activeFilePath, openFiles, classId, handleWorkspaceMutated]);
+    }, [openFiles, classId, handleWorkspaceMutated]);
 
-    // 「実行」ボタン(EditorPane)。プログラムの実行(保存→ターミナルへの
-    // 起動コマンド送信)のみを行い、Webプレビューパネルの開閉には一切
-    // 関与しない - プレビューの表示/非表示は「Webプレビュー」ボタン
-    // (handleToggleWebPreview、下記)にすべて任せる。runAction.kindが
-    // 'terminal'(.py/.js/.go/.sh等)の時だけ有効(EditorPane側でボタンも
-    // その時だけ活性化する) - 'preview'(.html/.htm、実行対象がそもそも
-    // 無い)と'none'では呼ばれない。
-    const handleRunActiveFile = useCallback(async () => {
-        if (runAction.kind !== 'terminal') return;
-        await handleSaveFile();
-        terminalsRef.current?.runInActiveTerminal(runAction.command);
-    }, [runAction, handleSaveFile]);
-
-    // 「Webプレビュー」トグルボタン(EditorPane、実行ボタンとは別)。
-    // プレビューパネルの開閉・表示内容は完全にこちらが担う。開く時、今
-    // アクティブなファイルの種類で表示内容を切り替える(kind:'file'と
-    // kind:'url'は互いに排他な1つのユニオン型 - 常にどちらか一方しか
-    // 存在しないため、WebPreviewPane側で両方が競合するバグは構造上
-    // 起こり得ない):
-    //   - runAction.kind==='preview'(.html/.htm): そのファイルを静的
-    //     ファイルとして直接表示する(kind:'file'、preview-file静的配信、
-    //     preview_handler.go)。
-    //   - それ以外(.py/.js/.go/.sh等、または非実行ファイル): 既定の
-    //     サーバーURL(http://localhost:5000)をリバースプロキシ経由で
-    //     表示する(kind:'url')。実際にサーバーを起動するのは別途
-    //     「実行」ボタンの役目。
-    // 閉じる時は何もしない。
-    const handleToggleWebPreview = useCallback(() => {
-        if (!isWebPreviewOpen) {
-            setPreviewRequest((prev): PreviewRequest =>
-                runAction.kind === 'preview' && activeFile
-                    ? { kind: 'file', path: activeFile.path, nonce: (prev?.nonce ?? 0) + 1 }
-                    : { kind: 'url', url: DEFAULT_PREVIEW_SERVER_URL, nonce: (prev?.nonce ?? 0) + 1 },
-            );
-        }
-        setIsWebPreviewOpen((v) => !v);
-    }, [isWebPreviewOpen, runAction, activeFile]);
+    // 「SQLビューア」トグル(マルチDB対応SQL実行&閲覧UI、左サイドバーの
+    // 「公開」直下のボタンから呼ばれる、Sidebar.tsx参照)。
+    const handleToggleSqlViewer = useCallback(() => {
+        setIsSqlViewerOpen((v) => !v);
+    }, []);
 
     // 未保存の変更を抱えたタブが1つでもあればカード一覧へ戻る前に確認する。
     const handleClose = useCallback(() => {
@@ -531,15 +516,17 @@ export function WorkspaceLayout({ isOpen, onClose, classId, title, teacherContex
                     onSelectFile={handleSelectFile}
                     onPathRemoved={handlePathRemoved}
                     onPathRenamed={handlePathRenamed}
-                    onBeforeCommit={handleSaveFile}
-                    isActiveFileDirty={!!activeFile && activeFile.content !== activeFile.savedContent}
-                    isSavingActiveFile={activeFile?.isSaving ?? false}
-                    onSaveActiveFile={handleSaveFile}
+                    onBeforeCommit={handleSaveAllFiles}
+                    hasDirtyFiles={openFiles.some((f) => f.content !== f.savedContent)}
+                    isSavingAll={isSavingAll}
+                    onSaveAllFiles={handleSaveAllFiles}
                     onMutated={handleWorkspaceMutated}
                     refreshSignal={workspaceRefreshNonce}
+                    isSqlViewerOpen={isSqlViewerOpen}
+                    onToggleSqlViewer={handleToggleSqlViewer}
                 />
 
-                {/* Main-Left: Editor(+ 任意でWebプレビューをsplit表示、上) + Terminal(下) */}
+                {/* Main-Left: Editor(+ 任意でSQLビューアをsplit表示、上) + Terminal(下) */}
                 <div className="flex-1 flex flex-col min-h-0 border-r border-[#3c3c3c] min-w-0">
                     <div className="flex-1 flex min-h-0">
                         <div className="flex-1 min-h-0 min-w-0">
@@ -552,31 +539,23 @@ export function WorkspaceLayout({ isOpen, onClose, classId, title, teacherContex
                                 onSelectTab={setActiveFilePath}
                                 onCloseTab={handleCloseTab}
                                 onChange={handleEditorChange}
-                                onSave={handleSaveFile}
-                                runAction={runAction}
-                                onRun={handleRunActiveFile}
-                                isWebPreviewOpen={isWebPreviewOpen}
-                                onToggleWebPreview={handleToggleWebPreview}
+                                onSaveAll={handleSaveAllFiles}
                                 liveSend={liveSend}
                                 asUserId={teacherContext?.asUserId}
                             />
                         </div>
-                        {isWebPreviewOpen && (
+                        {isSqlViewerOpen && (
                             <>
                                 <ResizeHandle
                                     axis="x"
                                     onResize={(delta) =>
-                                        setWebPreviewWidth((w) =>
-                                            clamp(w - delta, WEB_PREVIEW_WIDTH_MIN, WEB_PREVIEW_WIDTH_MAX),
+                                        setSqlViewerWidth((w) =>
+                                            clamp(w - delta, SQL_VIEWER_WIDTH_MIN, SQL_VIEWER_WIDTH_MAX),
                                         )
                                     }
                                 />
-                                <div style={{ width: webPreviewWidth }} className="shrink-0 min-h-0 border-l border-[#3c3c3c]">
-                                    <WebPreviewPane
-                                        classId={classId}
-                                        request={previewRequest}
-                                        onClose={() => setIsWebPreviewOpen(false)}
-                                    />
+                                <div style={{ width: sqlViewerWidth }} className="shrink-0 min-h-0 border-l border-[#3c3c3c]">
+                                    <SqlSandboxViewer classId={classId} onClose={() => setIsSqlViewerOpen(false)} />
                                 </div>
                             </>
                         )}

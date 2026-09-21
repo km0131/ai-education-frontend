@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { securedFetch } from '@/src/lib/api';
+import Cookies from 'js-cookie';
+import { API_URL, securedFetch, getActingAsUser } from '@/src/lib/api';
 import { ContextMenu, ContextMenuState } from './ContextMenu';
 import { PromptModal, PromptModalState } from './PromptModal';
 import { ConfirmModal, ConfirmModalState } from './ConfirmModal';
@@ -15,12 +16,13 @@ interface FileExplorerPaneProps {
     onSelectFile: (item: FileTreeItem) => void;
     onPathRemoved: (removedPath: string) => void;
     onPathRenamed: (oldPath: string, newPath: string) => void;
-    // 「保存」機能はここ(左のファイル操作ヘッダー)に一元化する - エディタは
-    // 複数ファイルをタブで開けるため、「保存」は常に今アクティブなタブに対して
-    // 効く単一の操作として、隠しファイル表示トグルの隣に置く。
-    isActiveFileDirty: boolean;
-    isSavingActiveFile: boolean;
-    onSaveActiveFile: () => void;
+    // 「すべて保存」機能はここ(左のファイル操作ヘッダー、隠しファイル表示
+    // トグルの隣)に一元化する - 個別ファイルの単一保存ボタンは廃止し、
+    // フロント側の保存はこれのみ(汎用ファイルアップロード&未保存ファイル
+    // 一括保存機能の実装 作業指示書)。
+    hasDirtyFiles: boolean;
+    isSavingAll: boolean;
+    onSaveAllFiles: () => void;
     // onMutated: 作成/移動(リネーム含む)/削除が成功するたびに呼ばれる
     // (講師サポート画面からの操作をWebSocket経由で生徒側へ即時反映させる
     // workspace-refreshブロードキャストのため、WorkspaceLayout参照)。
@@ -58,6 +60,34 @@ async function fetchDir(classId: string, dirPath?: string): Promise<{ path: stri
     };
 }
 
+// アップロード(POST /container/files/upload)はmultipart/form-dataで送る
+// 必要があるが、securedFetch(api.ts)は常にContent-Type: application/json
+// を既定で付けてしまう(FormDataを渡してもブラウザが自動計算する本来の
+// `multipart/form-data; boundary=...`を上書きしてしまい、正しく送れない)。
+// この制約は既存の画像アップロード機能(uploadWithRetry.ts)も同じ理由で
+// securedFetchを使わず素のfetchで送っている、既に確立された回避方法 - それに
+// 倣う。
+async function uploadSandboxFile(classId: string, destination: string, file: File): Promise<FileTreeItem> {
+    const token = Cookies.get('auth_token');
+    const form = new FormData();
+    form.append('course_id', classId);
+    form.append('destination', destination);
+    form.append('file', file);
+
+    let url = `${API_URL}/api/v2/program/container/files/upload`;
+    const asUser = getActingAsUser();
+    if (asUser) url += `?as_user=${encodeURIComponent(asUser)}`;
+
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `「${file.name}」のアップロードに失敗しました`);
+    return data.item as FileTreeItem;
+}
+
 function readDraggedItem(e: React.DragEvent): DraggedItem | null {
     const raw = e.dataTransfer.getData('application/json');
     if (!raw) return null;
@@ -92,6 +122,7 @@ function TreeNode({
     onRename,
     onDelete,
     onDropMove,
+    onDropFiles,
     onContextMenu,
     readOnly,
 }: {
@@ -108,6 +139,11 @@ function TreeNode({
     onRename: (item: FileTreeItem) => void;
     onDelete: (item: FileTreeItem) => void;
     onDropMove: (dragged: DraggedItem, targetDirPath: string) => void;
+    // onDropFiles: OS(エクスプローラー/Finder等)からのファイルドラッグ&
+    // ドロップ(汎用ファイルアップロード作業指示書) - アプリ内部の移動用
+    // ドラッグ(onDropMove、application/jsonのdataTransfer)とは別チャネル
+    // (dataTransfer.files)で判別する。
+    onDropFiles: (files: FileList, targetDirPath: string) => void;
     onContextMenu: (e: React.MouseEvent, item: FileTreeItem) => void;
     // readOnly: クラスメイト間の相互閲覧(Peer Viewer、読み取り専用)モード。
     // ドラッグ移動・右クリックメニュー・作成/リネーム/削除の各操作用UIを
@@ -145,6 +181,10 @@ function TreeNode({
                 e.preventDefault();
                 e.stopPropagation();
                 setIsDragOver(false);
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    onDropFiles(e.dataTransfer.files, item.path);
+                    return;
+                }
                 const dragged = readDraggedItem(e);
                 if (dragged) onDropMove(dragged, item.path);
             }}
@@ -267,6 +307,7 @@ function TreeNode({
                                 onRename={onRename}
                                 onDelete={onDelete}
                                 onDropMove={onDropMove}
+                                onDropFiles={onDropFiles}
                                 onContextMenu={onContextMenu}
                                 readOnly={readOnly}
                             />
@@ -288,9 +329,9 @@ export function FileExplorerPane({
     onSelectFile,
     onPathRemoved,
     onPathRenamed,
-    isActiveFileDirty,
-    isSavingActiveFile,
-    onSaveActiveFile,
+    hasDirtyFiles,
+    isSavingAll,
+    onSaveAllFiles,
     onMutated,
     refreshSignal,
     readOnly,
@@ -467,6 +508,78 @@ export function FileExplorerPane({
         [doMove],
     );
 
+    // handleUploadFiles: ファイルツリーへのドラッグ&ドロップ、またはツール
+    // バーのアップロードボタンから呼ばれる(汎用ファイルアップロード作業
+    // 指示書)。複数ファイルを並行アップロードし、1つの失敗で他を巻き込ま
+    // ない(handleCreateと同じ、失敗はalertで個別に知らせる)。アップロード後
+    // はdestinationDirを再取得してツリーに即時反映する。
+    const [isUploading, setIsUploading] = useState(false);
+    const handleUploadFiles = useCallback(
+        async (files: FileList | File[], destinationDir: string) => {
+            const fileArray = Array.from(files);
+            if (fileArray.length === 0) return;
+            setIsUploading(true);
+            try {
+                const outcomes = await Promise.allSettled(
+                    fileArray.map((file) => uploadSandboxFile(classId, destinationDir, file)),
+                );
+                const failed = outcomes.filter(
+                    (o): o is PromiseRejectedResult => o.status === 'rejected',
+                );
+                if (failed.length > 0) {
+                    alert(failed.map((f) => (f.reason instanceof Error ? f.reason.message : String(f.reason))).join('\n'));
+                }
+            } finally {
+                setIsUploading(false);
+                refreshDirOrRoot(destinationDir);
+                onMutated?.();
+            }
+        },
+        [classId, refreshDirOrRoot, onMutated],
+    );
+
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const handleUploadButtonClick = useCallback(() => {
+        fileInputRef.current?.click();
+    }, []);
+
+    // handleDownloadWorkspace: 「ダウンロード」ボタン(ダウンロードシステム)。
+    // ワークスペース全体をZIP化してダウンロードするAPI(GET /container/download、
+    // download_handler.go)は<a href>の素のナビゲーションではなく認証付きの
+    // 通常のfetch(securedFetch)で取得する必要がある(Authorizationヘッダーを
+    // 付けられないブラウザナビゲーションでは認証できないため - preview系の
+    // 専用チケットと同じ制約)。取得したレスポンスをBlobに変換し、一時的な
+    // <a download>要素を作ってクリックすることでブラウザの保存ダイアログへ
+    // 橋渡しする(ダウンロード自体はブラウザのメモリ上のBlobから行われる
+    // ため、ページのfetch自体がサンドボックス化されたiframe内でも問題ない)。
+    const [isDownloading, setIsDownloading] = useState(false);
+    const handleDownloadWorkspace = useCallback(async () => {
+        setIsDownloading(true);
+        try {
+            const res = await securedFetch(
+                `/api/v2/program/container/download?course_id=${encodeURIComponent(classId)}`,
+                { method: 'GET' },
+            );
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'ダウンロードに失敗しました');
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'workspace.zip';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert(err instanceof Error ? err.message : 'ダウンロードに失敗しました');
+        } finally {
+            setIsDownloading(false);
+        }
+    }, [classId]);
+
     const handleDelete = useCallback(
         (item: FileTreeItem) => {
             setConfirmModal({
@@ -542,12 +655,22 @@ export function FileExplorerPane({
                 <div className="flex items-center gap-2">
                     {!readOnly && (
                         <button
-                            title="ファイルを保存 (Ctrl+S)"
-                            disabled={!isActiveFileDirty || isSavingActiveFile}
-                            onClick={onSaveActiveFile}
+                            title="すべて保存 (Ctrl+S)"
+                            disabled={!hasDirtyFiles || isSavingAll}
+                            onClick={onSaveAllFiles}
                             className="text-xs text-[#cccccc] hover:text-white disabled:opacity-30 disabled:hover:text-[#cccccc]"
                         >
-                            <Icon name="save" />
+                            <Icon name="save-all" />
+                        </button>
+                    )}
+                    {!readOnly && (
+                        <button
+                            title="ワークスペースをZIPでダウンロード"
+                            disabled={isDownloading}
+                            onClick={handleDownloadWorkspace}
+                            className="text-xs text-[#cccccc] hover:text-white disabled:opacity-30 disabled:hover:text-[#cccccc]"
+                        >
+                            <Icon name="desktop-download" />
                         </button>
                     )}
                     <button
@@ -575,6 +698,27 @@ export function FileExplorerPane({
                             >
                                 <Icon name="new-folder" />
                             </button>
+                            <button
+                                title="ファイルをアップロード"
+                                disabled={createTargetDir === null || isUploading}
+                                onClick={handleUploadButtonClick}
+                                className="text-xs text-[#cccccc] hover:text-white disabled:opacity-30 disabled:hover:text-[#cccccc]"
+                            >
+                                <Icon name="cloud-upload" />
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                hidden
+                                onChange={(e) => {
+                                    const files = e.target.files;
+                                    e.target.value = ''; // 同じファイルを続けて選んでもonChangeが発火するようにする
+                                    if (files && files.length > 0 && createTargetDir) {
+                                        handleUploadFiles(files, createTargetDir);
+                                    }
+                                }}
+                            />
                         </>
                     )}
                 </div>
@@ -597,6 +741,10 @@ export function FileExplorerPane({
                     if (readOnly) return;
                     e.preventDefault();
                     if (!rootPath) return;
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        handleUploadFiles(e.dataTransfer.files, rootPath);
+                        return;
+                    }
                     const dragged = readDraggedItem(e);
                     if (dragged) handleDropMove(dragged, rootPath);
                 }}
@@ -606,10 +754,22 @@ export function FileExplorerPane({
             >
                 <Icon name="folder-opened" />
                 <span>workspace</span>
+                {isUploading && <span className="text-[10px] text-[#8a8a8a] normal-case font-normal">アップロード中...</span>}
             </div>
 
             <div
                 className="flex-1 overflow-y-auto"
+                onDragOver={(e) => {
+                    if (readOnly) return;
+                    e.preventDefault();
+                }}
+                onDrop={(e) => {
+                    if (readOnly || !rootPath) return;
+                    e.preventDefault();
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        handleUploadFiles(e.dataTransfer.files, rootPath);
+                    }
+                }}
                 onContextMenu={(e) => {
                     if (readOnly) {
                         e.preventDefault();
@@ -658,6 +818,7 @@ export function FileExplorerPane({
                             onRename={handleRename}
                             onDelete={handleDelete}
                             onDropMove={handleDropMove}
+                            onDropFiles={handleUploadFiles}
                             onContextMenu={openItemContextMenu}
                             readOnly={readOnly}
                         />
