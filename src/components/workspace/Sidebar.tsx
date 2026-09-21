@@ -28,10 +28,15 @@ interface SidebarProps {
     onSelectFile: (item: FileTreeItem) => void;
     onPathRemoved: (removedPath: string) => void;
     onPathRenamed: (oldPath: string, newPath: string) => void;
+    // onBeforeCommit: 「保存(コミット)」前にすべて保存(handleSaveAllFiles、
+    // WorkspaceLayout)をawaitし、未保存の編集内容をコミット前に確実に
+    // 書き込ませる(GitPanel参照)。
     onBeforeCommit?: () => Promise<void>;
-    isActiveFileDirty: boolean;
-    isSavingActiveFile: boolean;
-    onSaveActiveFile: () => void;
+    // hasDirtyFiles/isSavingAll/onSaveAllFiles: 「すべて保存」(Save All) -
+    // フロント側の保存機能はこれのみ(個別ファイルの単一保存ボタンは廃止した)。
+    hasDirtyFiles: boolean;
+    isSavingAll: boolean;
+    onSaveAllFiles: () => void;
     // onMutated/refreshSignal: 講師サポート画面と生徒画面それぞれの
     // ワークスペースを同一のworkspace-refresh WSメッセージで即時同期させる
     // ための仕組み(WorkspaceLayout参照) - onMutatedは自分側の操作成功時に
@@ -41,6 +46,13 @@ interface SidebarProps {
     // ままで、既存の挙動を変えない。
     onMutated?: (reason: 'git' | 'file' | 'publish') => void;
     refreshSignal?: number;
+    // SQLビューア起動スイッチ(UIレイアウト修正 作業指示書 -「公開」ボタンの
+    // すぐ下に配置)。開閉トグルのみをここで担う - テーブル/行の追加・削除
+    // やデータ形式確認といった個別操作はすべてSqlSandboxViewer自身の
+    // ヘッダー/ツールバーに集約されている(EditorPane右側のsplit pane、
+    // WorkspaceLayout参照)。
+    isSqlViewerOpen: boolean;
+    onToggleSqlViewer: () => void;
 }
 
 interface GitPanelProps {
@@ -206,11 +218,13 @@ export function Sidebar({
     onPathRemoved,
     onPathRenamed,
     onBeforeCommit,
-    isActiveFileDirty,
-    isSavingActiveFile,
-    onSaveActiveFile,
+    hasDirtyFiles,
+    isSavingAll,
+    onSaveAllFiles,
     onMutated,
     refreshSignal,
+    isSqlViewerOpen,
+    onToggleSqlViewer,
 }: SidebarProps) {
     const [panel, setPanel] = useState<SidebarPanel>('files');
     const [panelWidth, setPanelWidth] = useState(PANEL_WIDTH_DEFAULT);
@@ -267,6 +281,21 @@ export function Sidebar({
                 >
                     <Icon name="broadcast" />
                 </button>
+
+                {/* SQLビューア起動スイッチ(UIレイアウト修正 作業指示書 -
+                    「公開」ボタンのすぐ下)。テーブル作成・削除/行追加・削除/
+                    データ形式確認といった個別のSQL操作はすべてSQLビューア
+                    パネル自身のヘッダー/ツールバーに集約されており、この
+                    アイコンバー側はパネルの開閉トグルのみを担う。 */}
+                <button
+                    title="SQLビューア"
+                    onClick={onToggleSqlViewer}
+                    className={`w-10 h-10 flex items-center justify-center text-xl rounded-md transition-colors ${
+                        isSqlViewerOpen ? 'bg-[#505050] border-l-2 border-[#007acc]' : 'hover:bg-[#3c3c3c]'
+                    }`}
+                >
+                    <Icon name="database" />
+                </button>
             </div>
 
             {/* サイドパネル */}
@@ -280,9 +309,9 @@ export function Sidebar({
                                 onSelectFile={onSelectFile}
                                 onPathRemoved={onPathRemoved}
                                 onPathRenamed={onPathRenamed}
-                                isActiveFileDirty={isActiveFileDirty}
-                                isSavingActiveFile={isSavingActiveFile}
-                                onSaveActiveFile={onSaveActiveFile}
+                                hasDirtyFiles={hasDirtyFiles}
+                                isSavingAll={isSavingAll}
+                                onSaveAllFiles={onSaveAllFiles}
                                 onMutated={onMutated ? () => onMutated('file') : undefined}
                                 refreshSignal={refreshSignal}
                             />

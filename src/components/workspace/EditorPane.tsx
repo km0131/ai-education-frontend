@@ -7,7 +7,6 @@ import { FileIcon } from './FileIcon';
 import { MarkdownPreview } from './MarkdownPreview';
 import { Icon } from './Icon';
 import { useLspDocument } from './lsp/useLspDocument';
-import { RunAction } from './runCommand';
 import { useLiveEditorSync } from './live/useLiveEditorSync';
 import { LiveMessage } from './live/liveTypes';
 
@@ -20,19 +19,11 @@ interface EditorPaneProps {
     onSelectTab: (path: string) => void;
     onCloseTab: (path: string) => void;
     onChange: (path: string, content: string) => void;
-    onSave: () => void;
-    // 「実行」ボタン。runActionはWorkspaceLayoutがactiveFileの拡張子から
-    // 決めたアクション種別 - .py/.js/.go/.shは'terminal'(ターミナルへ送信する
-    // コマンド付き)、.html/.htmは'preview'(Webプレビューを直接開く、
-    // ターミナルは経由しない)、それ以外は'none'(ボタンを非活性にする)。
-    // onRunはクリック時に呼ぶだけで、保存→実際の分岐処理は全て
-    // WorkspaceLayout側が担う。
-    runAction: RunAction;
-    onRun: () => void;
-    // 「Webプレビュー」トグル。開閉状態自体はWorkspaceLayoutが持つ(Monaco
-    // Editorの右側にsplit表示するレイアウト側の都合のため)。
-    isWebPreviewOpen: boolean;
-    onToggleWebPreview: () => void;
+    // 「すべて保存」(Save All、Ctrl/Cmd+S・Ctrl/Cmd+Shift+S) -
+    // フロント側の保存はこれ1本のみ(個別ファイルの単一保存は廃止した)。
+    // プレビューモード中はMonacoがフォーカスを持たないため、Monaco自身の
+    // addCommandではなくこのペイン全体のonKeyDownCaptureにまとめて処理する。
+    onSaveAll: () => void;
     // 講師による生徒セッションのリアルタイム監視・共同操作(ライブセッション
     // 同期)。WorkspaceLayoutが1本だけ持つWebSocket接続への送信関数を、
     // タブごとのuseLiveEditorSync(EditorTabBody内)へそのまま渡す。
@@ -43,8 +34,8 @@ interface EditorPaneProps {
     // as_userクエリパラメータで既に対応済みのため、ここでは関与しない)。
     asUserId?: string;
     // readOnly: クラスメイト間の相互閲覧(Peer Viewer)モード。Monaco自体を
-    // 編集不可にし、実行/Webプレビュー/保存状態表示などの編集系ツールバーを
-    // 隠す(タブの切り替え自体は引き続き行える - 複数ファイルの参照は許可)。
+    // 編集不可にし、保存状態表示などの編集系ツールバーを隠す(タブの
+    // 切り替え自体は引き続き行える - 複数ファイルの参照は許可)。
     // LSP補完も無効化する(useLspDocumentのenabled引数参照)。
     readOnly?: boolean;
 }
@@ -145,11 +136,7 @@ export function EditorPane({
     onSelectTab,
     onCloseTab,
     onChange,
-    onSave,
-    runAction,
-    onRun,
-    isWebPreviewOpen,
-    onToggleWebPreview,
+    onSaveAll,
     liveSend,
     asUserId,
     readOnly,
@@ -157,15 +144,16 @@ export function EditorPane({
     const activeFile = openFiles.find((f) => f.path === activeFilePath) ?? null;
     const isMarkdown = !!activeFile && activeFile.name.toLowerCase().endsWith('.md');
 
-    // Ctrl/Cmd+Sは編集モード・プレビューモード両方で効くよう、Monaco自身の
-    // キーバインドではなくこのペイン全体のonKeyDownで一箇所にまとめて処理する
-    // (プレビュー中はMonacoが非表示=フォーカスを持たないため、Monaco自身の
-    // addCommandでは拾えない)。常に「今アクティブなタブ」を保存する
-    // (呼び出し元のonSaveがそう実装されている)。refで常に最新のonSaveを参照する。
-    const onSaveRef = useRef(onSave);
+    // Ctrl/Cmd+S・Ctrl/Cmd+Shift+Sはどちらも「すべて保存」を呼ぶ(フロント側の
+    // 保存経路はこれ1本のみ)。編集モード・プレビューモード両方で効くよう、
+    // Monaco自身のキーバインドではなくこのペイン全体のonKeyDownで一箇所に
+    // まとめて処理する(プレビュー中はMonacoが非表示=フォーカスを持たない
+    // ため、Monaco自身のaddCommandでは拾えない)。refで常に最新のonSaveAllを
+    // 参照する。
+    const onSaveAllRef = useRef(onSaveAll);
     useEffect(() => {
-        onSaveRef.current = onSave;
-    }, [onSave]);
+        onSaveAllRef.current = onSaveAll;
+    }, [onSaveAll]);
 
     const [mode, setMode] = useState<EditorMode>('edit');
     // 別のタブに切り替えたら常に編集モードへ戻す(プレビューを見ていたタブから
@@ -175,7 +163,7 @@ export function EditorPane({
         setMode('edit');
     }, [activeFilePath]);
 
-    // 保存成功のトースト的な表示(Ctrl+S/保存ボタン共通)。isSavingがtrue→false
+    // 保存成功のトースト的な表示(Ctrl+S/すべて保存ボタン共通)。isSavingがtrue→false
     // に変わった瞬間にエラーが無ければ「保存しました」を数秒だけ出す
     // (それまではdirtyドットが消えるだけで成功が視覚的に分かりにくかったため)。
     // タブを切り替えた瞬間は前のタブの状態を引きずらないようリセットする。
@@ -200,7 +188,7 @@ export function EditorPane({
     const handleKeyDownCapture = (e: React.KeyboardEvent) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
             e.preventDefault();
-            onSaveRef.current();
+            onSaveAllRef.current();
         }
     };
 
@@ -303,35 +291,6 @@ export function EditorPane({
                                     <Icon name="check" /> 保存しました
                                 </span>
                             )}
-                            <button
-                                onClick={onToggleWebPreview}
-                                title={
-                                    runAction.kind === 'preview'
-                                        ? 'このHTMLファイルをプレビュー'
-                                        : 'Webプレビュー(http://localhost:5000)'
-                                }
-                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-bold transition-colors ${
-                                    isWebPreviewOpen
-                                        ? 'bg-[#0e639c] text-white'
-                                        : 'bg-[#3c3c3c] hover:bg-[#4a4a4a] text-[#cccccc]'
-                                }`}
-                            >
-                                <Icon name="browser" />
-                                Webプレビュー
-                            </button>
-                            <button
-                                onClick={onRun}
-                                disabled={runAction.kind !== 'terminal'}
-                                title={runAction.kind === 'terminal' ? `実行: ${runAction.command}` : '実行不可能なファイルです'}
-                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-bold transition-colors ${
-                                    runAction.kind === 'terminal'
-                                        ? 'bg-[#238636] hover:bg-[#2ea043] text-white'
-                                        : 'bg-[#3c3c3c] text-[#6a6a6a] cursor-not-allowed'
-                                }`}
-                            >
-                                <Icon name="play" />
-                                実行
-                            </button>
                         </>
                     )}
                 </div>

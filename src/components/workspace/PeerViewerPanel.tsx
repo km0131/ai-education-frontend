@@ -207,9 +207,9 @@ export function PeerViewerPanel({ isOpen, onClose, classId, targetUserId, target
                         onSelectFile={handleSelectFile}
                         onPathRemoved={() => {}}
                         onPathRenamed={() => {}}
-                        isActiveFileDirty={false}
-                        isSavingActiveFile={false}
-                        onSaveActiveFile={() => {}}
+                        hasDirtyFiles={false}
+                        isSavingAll={false}
+                        onSaveAllFiles={() => {}}
                         refreshSignal={refreshNonce}
                         readOnly
                     />
@@ -225,11 +225,7 @@ export function PeerViewerPanel({ isOpen, onClose, classId, targetUserId, target
                         onSelectTab={setActiveFilePath}
                         onCloseTab={handleCloseTab}
                         onChange={handleEditorChange}
-                        onSave={() => {}}
-                        runAction={{ kind: 'none' }}
-                        onRun={() => {}}
-                        isWebPreviewOpen={false}
-                        onToggleWebPreview={() => {}}
+                        onSaveAll={() => {}}
                         liveSend={() => {}}
                         asUserId={targetUserId}
                         readOnly

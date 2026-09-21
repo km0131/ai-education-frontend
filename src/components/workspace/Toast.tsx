@@ -3,9 +3,17 @@
 import React, { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 
+// variant: 既定の'warning'(黄色い警告アイコン、LSPクラッシュ通知等
+// 「編集自体は普通に続けられる」軽い注意向け)に加え、SQLビューアの
+// インライン編集完了等、はっきり成功を伝えたい通知向けに'success'
+// (緑のチェックアイコン)を用意している - 既存の全呼び出し元は
+// variantを渡さないため'warning'のまま、挙動は変わらない。
+type ToastVariant = 'warning' | 'success';
+
 interface ToastItem {
     id: number;
     message: string;
+    variant: ToastVariant;
     // 同じdedupeKeyのトーストが既に表示中なら、新規追加せず既存のものを
     // そのまま(再表示タイマーだけ延長して)使う - LSPクラッシュ通知等、
     // 同じ原因で短時間に何度も発火し得るイベントの重複表示を防ぐため
@@ -33,14 +41,17 @@ function dismissToast(id: number) {
 // エラー画面を割り込ませずに軽く知らせるための最小限のトースト通知。
 // 「編集自体は普通に続けられる」性質の通知向け(致命的エラーはalert()等の
 // 既存パターンのまま使う - FileExplorerPaneの作成/削除失敗等)。
-export function pushToast(message: string, options?: { dedupeKey?: string; durationMs?: number }): void {
+export function pushToast(
+    message: string,
+    options?: { dedupeKey?: string; durationMs?: number; variant?: ToastVariant },
+): void {
     const durationMs = options?.durationMs ?? 6000;
     if (options?.dedupeKey) {
         const existing = items.find((item) => item.dedupeKey === options.dedupeKey);
         if (existing) return;
     }
     const id = nextId++;
-    items = [...items, { id, message, dedupeKey: options?.dedupeKey, durationMs }];
+    items = [...items, { id, message, variant: options?.variant ?? 'warning', dedupeKey: options?.dedupeKey, durationMs }];
     emit();
     window.setTimeout(() => dismissToast(id), durationMs);
 }
@@ -67,7 +78,10 @@ export function ToastHost() {
                     key={item.id}
                     className="flex items-start gap-2 px-3 py-2 rounded-md shadow-lg bg-[#2d2d2d] border border-[#3c3c3c] text-[#cccccc] text-xs"
                 >
-                    <Icon name="warning" className="text-[#cca700] shrink-0 mt-0.5" />
+                    <Icon
+                        name={item.variant === 'success' ? 'check' : 'warning'}
+                        className={`shrink-0 mt-0.5 ${item.variant === 'success' ? 'text-[#6a9955]' : 'text-[#cca700]'}`}
+                    />
                     <span className="flex-1 leading-snug">{item.message}</span>
                     <button
                         type="button"
