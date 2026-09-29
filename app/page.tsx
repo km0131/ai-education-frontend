@@ -127,7 +127,7 @@ function QrScannerModal({ onScanSuccess, onClose }: QrScannerModalProps) {
   };
 
   return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4 animate-fadeIn backdrop-blur-sm">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 animate-fadeIn backdrop-blur-sm">
         <div className="bg-white p-6 rounded-3xl w-full max-w-sm relative shadow-2xl flex flex-col gap-4">
           <button
               onClick={() => { stopCamera(); onClose(); }}

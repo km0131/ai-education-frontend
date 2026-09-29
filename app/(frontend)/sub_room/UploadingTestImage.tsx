@@ -462,7 +462,7 @@ export function ManageTestModal({ isOpen, onClose, classId, onSuccess }: ManageT
             <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose}></div>
 
             <div
-                className={`bg-white rounded-[3rem] shadow-2xl w-full ${mode === 'view' ? 'max-w-3xl' : 'max-w-xl'} z-10 overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100 transition-all`}>
+                className={`bg-white rounded-[3rem] shadow-2xl w-full ${mode === 'view' ? 'max-w-3xl' : 'max-w-xl'} z-10 overflow-hidden animate-fadeIn border border-gray-100 transition-all`}>
 
                 {/* ヘッダー */}
                 <div className="bg-amber-600 p-8 flex justify-between items-center text-white">

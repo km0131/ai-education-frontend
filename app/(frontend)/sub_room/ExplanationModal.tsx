@@ -127,7 +127,7 @@ export default function ExplanationModal({ isOpen, onClose,projectUuid, categori
     const currentCategoryTitle = categories.find(c => c.category_index === activeTab)?.title || '';
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-fadeIn">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border-4 border-[#e0f2fe]">
 
                 {/* ヘッダー */}
